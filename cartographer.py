@@ -754,7 +754,8 @@ class Handler(BaseHTTPRequestHandler):
         b = t.encode(); self.send_response(200); self.send_header('Content-Type','text/plain'); self.send_header('Content-Length',len(b)); self.end_headers(); self.wfile.write(b)
     def _html(self):
         b = DASHBOARD_PATH.read_bytes(); self.send_response(200); self.send_header('Content-Type','text/html'); self.send_header('Content-Length',len(b)); self.end_headers(); self.wfile.write(b)
-    def log_message(self, *a): pass
+    def log_message(self, format, *args):
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}", flush=True)
 
 def main():
     global CURRENT_PROJECT_ID, PROJECTS

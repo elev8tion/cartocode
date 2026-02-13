@@ -793,8 +793,16 @@ async function loadProjectIntoTab(path){
     return;
   }
 
-  // Check max projects limit
-  if(projectTabs.length >= 2){
+  // Count actual user projects (exclude Cartographer's own directory)
+  const userProjectCount = projectTabs.filter(id => {
+    const proj = PROJECTS[id];
+    const projPath = proj?.metadata?.project_root || '';
+    // Exclude if project is the Cartographer directory itself
+    return !projPath.includes('/cartocode') || !projPath.endsWith('cartocode');
+  }).length;
+
+  // Check max projects limit (2 user projects + cartographer itself)
+  if(userProjectCount >= 2){
     alert('Maximum 2 projects allowed. Close one first.');
     return;
   }
@@ -1248,7 +1256,13 @@ function showProjectPicker(){
 
     // Show currently loaded projects first
     if(projectTabs.length > 0){
-      h+='<div style="margin-bottom:var(--spacing-3xl)"><div style="color:var(--green);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:var(--spacing-lg);font-family:var(--fm);font-weight:600">✓ Currently Loaded ('+projectTabs.length+'/2)</div>';
+      // Count only user projects (exclude Cartographer's own directory)
+      const userProjectCount = projectTabs.filter(id => {
+        const proj = PROJECTS[id];
+        const projPath = proj?.metadata?.project_root || '';
+        return !projPath.includes('/cartocode') || !projPath.endsWith('cartocode');
+      }).length;
+      h+='<div style="margin-bottom:var(--spacing-3xl)"><div style="color:var(--green);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:var(--spacing-lg);font-family:var(--fm);font-weight:600">✓ Currently Loaded ('+userProjectCount+'/2)</div>';
       projectTabs.forEach((projectId,i)=>{
         const proj = PROJECTS[projectId];
         const projName = proj?.metadata?.project_name || 'Unknown';
@@ -1275,12 +1289,7 @@ function showProjectPicker(){
       el.onclick=()=>{
         const projectId = el.getAttribute('data-project-id');
         if(projectId && PROJECTS[projectId]){
-          currentProjectId = projectId;
-          D = PROJECTS[projectId];
-          if(D.nodes && D.nodes.length > 0){
-            applyLayout();
-          }
-          render();
+          switchProject(projectId);  // Use switchProject for consistency
         }
       };
     });
