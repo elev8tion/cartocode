@@ -723,11 +723,11 @@ When proposing code changes:
 
     # Update chat history
     if multi_project_mode:
-        MULTI_PROJECT_CHAT_HISTORY.append({"role": "user", "content": message})
+        MULTI_PROJECT_CHAT_HISTORY.append({"role": "user", "content": user_message})
         MULTI_PROJECT_CHAT_HISTORY.append({"role": "assistant", "content": assistant_message})
     else:
         if project_id and project_id in PROJECTS:
-            PROJECTS[project_id]['chat_history'].append({"role": "user", "content": message})
+            PROJECTS[project_id]['chat_history'].append({"role": "user", "content": user_message})
             PROJECTS[project_id]['chat_history'].append({"role": "assistant", "content": assistant_message})
 
     return assistant_message

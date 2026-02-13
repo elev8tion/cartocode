@@ -1451,7 +1451,7 @@ function renderChatMessages(){
     const authorName=isUser?'You':'Cartographer AI';
 
     return`
-      <div class="chat-message-wrapper ${isUser?'user':' assistant'}" style="animation-delay:${idx*0.05}s">
+      <div class="chat-message-wrapper ${isUser?'user':'assistant'}" style="animation-delay:${idx*0.05}s">
         <div class="chat-avatar ${isUser?'user-avatar':'assistant-avatar'}">${avatarIcon}</div>
         <div class="chat-message-content">
           <div class="chat-message-meta">
@@ -2233,7 +2233,7 @@ function render(){
               sendChatMessage();
             }
           }
-        </script>
+        <\/script>
 
         <!-- Footer -->
         <div style="display:flex;gap:var(--spacing-sm);margin-top:var(--spacing-md);justify-content:space-between">
@@ -2702,10 +2702,10 @@ function rGraph(nodes,edges,conn,hl){
     if(isSearchMatch&&!sel)s+=`<circle r="${r+5}" fill="${col}" opacity="0.25" filter="url(#glow)"><animate attributeName="r" values="${r+5};${r+7};${r+5}" dur="1.5s" repeatCount="indefinite"/></circle>`;
 
     // Language ring
-    s+=`<circle r="${r+2}" fill="none" stroke="${lcol}" stroke-width="2.5" opacity="${sl2||c?.6:.3}"/>`;
+    s+=`<circle r="${r+2}" fill="none" stroke="${lcol}" stroke-width="2.5" opacity="${sl2||c?0.6:0.3}"/>`;
 
     // Main node circle
-    s+=`<circle r="${r}" fill="${sl2?col:col+'22'}" stroke="${col}" stroke-width="${sl2?3.5:c?2.5:1.5}" opacity="${dim?.3:1}"${sl2||isCritical?` filter="url(#glow)"`:``}/>`;
+    s+=`<circle r="${r}" fill="${sl2?col:col+'22'}" stroke="${col}" stroke-width="${sl2?3.5:c?2.5:1.5}" opacity="${dim?0.3:1}"${sl2||isCritical?` filter="url(#glow)"`:``}/>`;
 
     // Center dot
     s+=`<circle r="${sl2?4:3}" fill="${sl2?'#fff':col}" opacity="${sl2?1:.9}"/>`;
@@ -2721,8 +2721,10 @@ function rGraph(nodes,edges,conn,hl){
     // Risk score badge (for high risk nodes)
     if(n.risk_score>=50)s+=`<g transform="translate(${r-2},${-r+2})"><rect x="-13" y="-9" width="26" height="18" rx="5" fill="${col}" opacity=".95" stroke="${col}" stroke-width="1.5"/><text text-anchor="middle" y="5" font-size="10" fill="#000" font-weight="700" font-family="var(--fm)" style="pointer-events:none">${Math.round(n.risk_score)}</text></g>`;
 
-    s+=`</g>`});
-  s+=`</g></svg>`;return s
+    s+=`</g>`;
+  });
+  s+=`</g></svg>`;
+  return s;
 }
 
 function rList(nodes){
