@@ -228,7 +228,42 @@ RECENT_PROJECTS_FILE = Path.home() / '.cartographer_history'
 # ── DeepSeek Chat State ──
 CONFIG_FILE = Path(__file__).parent / '.cartographer_config.json'
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
-SELECTED_MODEL = 'deepseek-chat'  # or 'deepseek-reasoner'
+
+# Model configurations
+MODEL_DEEPSEEK_CODER = 'deepseek-coder'
+MODEL_DEEPSEEK_REASONER = 'deepseek-reasoner'
+MODEL_DEEPSEEK_CHAT = 'deepseek-chat'
+
+# Token limits per model
+TOKEN_LIMITS = {
+    MODEL_DEEPSEEK_CODER: 128000,
+    MODEL_DEEPSEEK_REASONER: 128000,
+    MODEL_DEEPSEEK_CHAT: 64000
+}
+
+# Optimal temperatures per model
+OPTIMAL_TEMPS = {
+    MODEL_DEEPSEEK_CODER: 0.7,
+    MODEL_DEEPSEEK_REASONER: 0.6,
+    MODEL_DEEPSEEK_CHAT: 0.7
+}
+
+SELECTED_MODEL = MODEL_DEEPSEEK_CODER  # Optimized for code analysis
+
+def estimate_tokens(text):
+    """Estimate token count (rough approximation: 1 token ≈ 4 chars)"""
+    return len(text) // 4
+
+def _truncate_to_tokens(text, max_tokens):
+    """Truncate text to approximate token limit"""
+    estimated_tokens = estimate_tokens(text)
+
+    if estimated_tokens <= max_tokens:
+        return text
+
+    # Truncate proportionally
+    target_chars = max_tokens * 4
+    return text[:target_chars]
 
 def generate_project_id(path):
     """Generate unique ID from absolute path"""
@@ -329,8 +364,82 @@ def load_project(path):
     }
 
 # ── DeepSeek Chat Functions ──
+def _select_relevant_files(query, scan_data, exclude_ids=[], max_files=10):
+    """Select files by relevance scoring instead of simple matching"""
+    query_lower = query.lower()
+    query_words = set(query_lower.split())
+
+    scored_files = []
+
+    for node in scan_data.get('nodes', []):
+        if node['id'] in exclude_ids:
+            continue
+
+        score = 0
+
+        # File name match (high weight)
+        if any(word in node['name'].lower() for word in query_words):
+            score += 5
+
+        # Path match (medium weight)
+        path_lower = node['path'].lower()
+        if any(word in path_lower for word in query_words):
+            score += 3
+
+        # Concern match (high weight for domain relevance)
+        for concern in node.get('concerns', []):
+            if concern in query_lower:
+                score += 4
+
+        # Risk score boost (prefer high-risk files for analysis)
+        if node['risk_score'] > 50:
+            score += 2
+
+        # Recent changes boost
+        if node.get('git_changes', 0) > 5:
+            score += 1
+
+        if score > 0:
+            scored_files.append((node, score))
+
+    # Sort by score descending and return top N
+    scored_files.sort(key=lambda x: x[1], reverse=True)
+    return [node for node, score in scored_files[:max_files]]
+
+
+def _extract_focus_areas(query, scan_data):
+    """Extract specific focus areas from query"""
+    query_lower = query.lower()
+    focus_areas = []
+
+    # Check for specific file mentions
+    import re
+    file_refs = re.findall(r'`([^`]+)`', query)
+    if file_refs:
+        focus_areas.append(f"Files mentioned: {', '.join(file_refs)}")
+
+    # Check for concern keywords
+    for concern, keywords in CONCERN_KEYWORDS.items():
+        if any(kw in query_lower for kw in keywords):
+            focus_areas.append(f"Domain: {concern}")
+
+    # Check for action keywords
+    actions = {
+        'security': ['security', 'vulnerability', 'exploit', 'inject'],
+        'performance': ['performance', 'slow', 'optimize', 'speed'],
+        'refactor': ['refactor', 'improve', 'clean', 'reorganize'],
+        'bug': ['bug', 'error', 'issue', 'problem', 'fix']
+    }
+
+    for action, keywords in actions.items():
+        if any(kw in query_lower for kw in keywords):
+            focus_areas.append(f"Task: {action} analysis")
+
+    return '\n'.join([f"- {area}" for area in focus_areas]) if focus_areas else "- General codebase analysis"
+
+
 def _build_single_project_context(query, project_id=None, include_files=[], max_files=10):
-    """Build intelligent context from Scanner data for a single project"""
+    """Build strategically-placed context from Scanner data"""
     global CURRENT_PROJECT_ID, PROJECTS
 
     if project_id is None:
@@ -339,100 +448,88 @@ def _build_single_project_context(query, project_id=None, include_files=[], max_
     if not project_id or project_id not in PROJECTS:
         return ""
 
-    # Use local reference to this project's scan data
     SCAN_DATA = PROJECTS[project_id]['scan_data']
-
     if not SCAN_DATA or not SCAN_DATA.get('nodes'):
         return ""
 
-    context_parts = []
+    # ═══════════════════════════════════════════════════
+    # TOP SECTION - Most Critical (High Attention)
+    # ═══════════════════════════════════════════════════
 
-    # 1. Project overview (metadata)
     meta = SCAN_DATA.get('metadata', {})
     project_name = meta.get('project_name', 'Unknown')
-    context_parts.append(
-        f"PROJECT: {project_name} (ID: {project_id})\n"
-        f"HEALTH: {meta.get('health_score', 0)}/100\n"
-        f"LANGUAGES: {', '.join(meta.get('languages', []))}\n"
-        f"TOTAL FILES: {meta.get('total_files', 0)}"
-    )
 
-    # 2. Agent context (already curated risk map)
-    agent_ctx = SCAN_DATA.get('agent_context', '')
-    if agent_ctx:
-        context_parts.append(agent_ctx)
+    top_section = f"""QUERY: {query}
 
-    # 3. Smart file selection based on query keywords
-    query_lower = query.lower()
-    relevant_files = []
+PROJECT OVERVIEW:
+- Name: {project_name} (ID: {project_id})
+- Health: {meta.get('health_score', 0)}/100
+- Languages: {', '.join(meta.get('languages', []))}
+- Total Files: {meta.get('total_files', 0)}
+"""
 
-    # Extract file references from query
-    import re
-    file_patterns = [
-        r'in\s+([a-zA-Z0-9_/.-]+\.[a-z]+)',  # "in auth.py"
-        r'`([a-zA-Z0-9_/.-]+\.[a-z]+)`',     # "`src/api.ts`"
-        r'file\s+([a-zA-Z0-9_/.-]+\.[a-z]+)',  # "file Header.tsx"
-        r'([a-zA-Z0-9_/-]+\.(?:py|ts|tsx|js|jsx|java|go|rs|cpp|c|h))\b'  # Direct file names
-    ]
-
-    mentioned_files = []
-    for pattern in file_patterns:
-        mentioned_files.extend(re.findall(pattern, query_lower))
-
-    # Deduplicate
-    mentioned_files = list(set(mentioned_files))
-
-    # Add explicitly mentioned files first
-    for file_ref in mentioned_files:
-        for node in SCAN_DATA.get('nodes', []):
-            if file_ref in node['path'].lower():
-                relevant_files.insert(0, node['id'])
-                break
-
-    # Match by concerns (auth, api, database, etc.)
-    for concern, files in SCAN_DATA.get('concern_clusters', {}).items():
-        if concern in query_lower:
-            relevant_files.extend([f['id'] for f in files[:3]])  # Top 3 per concern
-
-    # Match by file paths
-    for node in SCAN_DATA.get('nodes', []):
-        path_lower = node.get('path', '').lower()
-        name_lower = node.get('name', '').lower()
-        # Check if any word from query is in path or name
-        for word in query_lower.split():
-            if len(word) > 2 and (word in path_lower or word in name_lower):
-                relevant_files.append(node['id'])
-                break
-
-    # Add explicitly requested files from API - handle project-qualified file IDs
+    # Add explicitly requested files to TOP (highest priority)
+    top_files = []
     for file_id in include_files:
-        # Remove project prefix if present (format: project_id:file_id)
         if ':' in file_id:
             pid, fid = file_id.split(':', 1)
             if pid == project_id:
-                relevant_files.append(fid)
+                top_files.append(fid)
         else:
-            relevant_files.append(file_id)
+            top_files.append(file_id)
 
-    # Deduplicate and limit to max_files
-    relevant_files = list(dict.fromkeys(relevant_files))[:max_files]
+    if top_files:
+        top_section += "\nEXPLICITLY REQUESTED FILES:\n"
+        for file_id in top_files[:3]:  # Limit to 3 in top section
+            node = next((n for n in SCAN_DATA.get('nodes', []) if n['id'] == file_id), None)
+            if node:
+                top_section += f"- {node['path']}\n"
 
-    # 4. Add file details with plain_english explanations
-    for file_id in relevant_files:
-        node = next((n for n in SCAN_DATA.get('nodes', []) if n['id'] == file_id), None)
-        if node:
+    # ═══════════════════════════════════════════════════
+    # MIDDLE SECTION - Supporting Context
+    # ═══════════════════════════════════════════════════
+
+    middle_section = f"""
+ARCHITECTURE & RISK MAP:
+{SCAN_DATA.get('agent_context', 'No risk map available')}
+"""
+
+    # Add relevant files based on query (middle priority)
+    relevant_files = _select_relevant_files(
+        query,
+        SCAN_DATA,
+        exclude_ids=top_files,
+        max_files=max_files - len(top_files)
+    )
+
+    if relevant_files:
+        middle_section += "\nRELEVANT FILES (ranked by query relevance):\n"
+        for node in relevant_files:
             tags_str = ', '.join(node.get('tags', []))
-            context_parts.append(
-                f"\nFILE: {node.get('path', 'Unknown')}\n"
-                f"RISK: {node.get('risk_score', 0)}/100\n"
-                f"TAGS: {tags_str}\n"
-                f"CONCERNS: {', '.join(node.get('concerns', []))}\n"
-                f"EXPLANATION: {node.get('plain_english', 'No explanation available.')}"
-            )
+            middle_section += f"""
+FILE: {node['path']}
+- Risk: {node['risk_score']}/100
+- Tags: {tags_str}
+- Concerns: {', '.join(node.get('concerns', []))}
+- Explanation: {node.get('plain_english', '')[:200]}...
+"""
 
-    # Join contexts
-    full_context = '\n\n'.join(context_parts)
-    return full_context
+    # ═══════════════════════════════════════════════════
+    # BOTTOM SECTION - Focus & Instructions (High Attention)
+    # ═══════════════════════════════════════════════════
+
+    bottom_section = f"""
+FOCUS AREAS (based on query):
+{_extract_focus_areas(query, SCAN_DATA)}
+
+OUTPUT REQUIREMENTS:
+- Use markdown code blocks with file paths (```lang\\n// File: path/to/file\\ncode\\n```)
+- Provide specific line numbers for changes
+- Reference risk scores and tags from context
+- Be concise but actionable
+"""
+
+    return f"{top_section}\n{middle_section}\n{bottom_section}"
 
 
 def build_codebase_context(query, project_id=None, include_files=[]):
@@ -440,24 +537,31 @@ def build_codebase_context(query, project_id=None, include_files=[]):
     context = _build_single_project_context(query, project_id, include_files, max_files=10)
     if not context:
         return "No codebase loaded."
-    # Truncate to ~8K tokens (~32K chars)
-    return context[:32000]
+    # Use token-based limit instead of char-based
+    return _truncate_to_tokens(context, max_tokens=120000)  # Leave room for response
 
 
 def build_multi_project_context(query, project_ids, include_files=[]):
-    """Build unified context from multiple projects with equal 50/50 split"""
+    """Build unified context from multiple projects with strategic placement"""
     global PROJECTS
 
-    # Validate inputs
     if not project_ids or len(project_ids) == 0:
         return "No projects loaded."
 
-    # If only one project, delegate to single project builder
     if len(project_ids) == 1:
         return build_codebase_context(query, project_ids[0], include_files)
 
-    # Multi-project mode: build context for each project with 5-file limit
-    contexts = []
+    # ═══════════════════════════════════════════════════
+    # TOP: Query and overview
+    # ═══════════════════════════════════════════════════
+
+    top_section = f"MULTI-PROJECT QUERY: {query}\n\n"
+
+    # ═══════════════════════════════════════════════════
+    # MIDDLE: Each project's context
+    # ═══════════════════════════════════════════════════
+
+    project_contexts = []
 
     for project_id in project_ids[:2]:  # Max 2 projects
         if project_id not in PROJECTS:
@@ -470,9 +574,8 @@ def build_multi_project_context(query, project_ids, include_files=[]):
                 pid, fid = file_id.split(':', 1)
                 if pid == project_id:
                     project_include_files.append(file_id)
-            # If no project prefix, skip (ambiguous which project it belongs to)
 
-        # Build context for this project with 5-file limit
+        # Build context with 5-file limit
         project_context = _build_single_project_context(
             query,
             project_id,
@@ -481,21 +584,30 @@ def build_multi_project_context(query, project_ids, include_files=[]):
         )
 
         if project_context:
-            # Add clear project separator
             project_name = PROJECTS[project_id].get('name', 'Unknown')
-            separator = f"\n{'='*60}\n=== PROJECT: {project_name} (ID: {project_id}) ===\n{'='*60}\n"
-            contexts.append(separator + project_context)
+            separator = f"\n{'='*70}\n{'='*5} PROJECT: {project_name} (ID: {project_id}) {'='*5}\n{'='*70}\n"
+            project_contexts.append(separator + project_context)
 
-    # Combine contexts
-    if not contexts:
-        return "No valid projects loaded."
+    middle_section = '\n\n'.join(project_contexts)
 
-    combined_context = '\n\n'.join(contexts)
+    # ═══════════════════════════════════════════════════
+    # BOTTOM: Cross-project focus
+    # ═══════════════════════════════════════════════════
 
-    # Safety truncate to ~32K chars
-    return combined_context[:32000]
+    bottom_section = f"""
+CROSS-PROJECT ANALYSIS INSTRUCTIONS:
+- Compare patterns and approaches between projects
+- Identify inconsistencies or integration points
+- Reference specific projects when making recommendations
+- Consider how changes in one project affect the other
+"""
 
-def call_deepseek(message, context, model='deepseek-chat', project_id=None, multi_project_mode=False):
+    combined = f"{top_section}\n{middle_section}\n{bottom_section}"
+
+    # Use token-based limit instead of char-based
+    return _truncate_to_tokens(combined, max_tokens=100000)  # Leave room for response
+
+def call_deepseek(message, context, model='deepseek-coder', project_id=None, multi_project_mode=False):
     """Make API call to DeepSeek with model-specific optimization"""
     global CURRENT_PROJECT_ID, PROJECTS, DEEPSEEK_API_KEY, MULTI_PROJECT_CHAT_HISTORY
 
@@ -503,7 +615,7 @@ def call_deepseek(message, context, model='deepseek-chat', project_id=None, mult
         project_id = CURRENT_PROJECT_ID
 
     if not DEEPSEEK_API_KEY:
-        raise ValueError("DEEPSEEK_API_KEY not set. Configure it via the settings or set the DEEPSEEK_API_KEY environment variable.")
+        raise ValueError("DEEPSEEK_API_KEY not set. Configure it via settings or environment variable.")
 
     try:
         from openai import OpenAI
@@ -515,64 +627,90 @@ def call_deepseek(message, context, model='deepseek-chat', project_id=None, mult
         base_url="https://api.deepseek.com"
     )
 
-    # Model-specific prompt optimization
-    if model == 'deepseek-reasoner':  # R1 model
-        # R1: Minimal system prompt, explicit task format
-        system_content = ""  # R1 performs better with no system prompt
-        temperature = 0.6  # Optimal for R1 reasoning
+    # ═══════════════════════════════════════════════════
+    # Model-Specific Optimization
+    # ═══════════════════════════════════════════════════
+
+    if model == MODEL_DEEPSEEK_REASONER:  # R1
+        # R1: Minimal/no system prompt, explicit task format
+        system_content = ""
+        temperature = OPTIMAL_TEMPS[MODEL_DEEPSEEK_REASONER]
+
         user_message = f"""Task: {message}
 
 Codebase Context:
 {context}
 
 Output Format:
-1. Analysis (explain the issue/requirement)
-2. Code changes (show as code diffs with file paths like `// File: path/to/file.ext`)
+1. Analysis (explain findings and reasoning)
+2. Code changes (show as diffs with file paths: // File: path/to/file)
 3. Testing plan (how to verify the changes)
 
-Use markdown code blocks with file paths for all code suggestions."""
-    else:  # V3 model (deepseek-chat)
-        # V3: Rich system prompt, conversational
-        system_content = f"""You are a senior software architect analyzing a codebase and proposing code changes.
+Use markdown code blocks for all code suggestions."""
+
+    elif model == MODEL_DEEPSEEK_CODER:  # Coder (recommended)
+        # Coder: Code-optimized system prompt
+        system_content = f"""You are an expert software architect specializing in code analysis and optimization.
+
+Codebase Context (strategically organized):
+{context}
+
+Analysis Guidelines:
+- Reference specific files, line numbers, and risk scores from context
+- Use markdown code blocks with file paths: ```lang\\n// File: path/to/file.ext\\ncode\\n```
+- Show clear before/after comparisons for modifications
+- Consider security, performance, and maintainability
+- Prioritize high-risk files and critical dependencies
+- Provide actionable, specific recommendations
+
+Code Quality Standards:
+- Follow language-specific best practices
+- Maintain consistency with existing codebase patterns
+- Consider edge cases and error handling
+- Document complex logic with inline comments"""
+
+        temperature = OPTIMAL_TEMPS[MODEL_DEEPSEEK_CODER]
+        user_message = message
+
+    else:  # V3 or default
+        # V3: General conversational prompt
+        system_content = f"""You are a senior software architect analyzing codebases.
 
 Codebase Context:
 {context}
 
 When proposing code changes:
-1. Use markdown code blocks with file paths: ```lang\n// File: path/to/file.ext\ncode here\n```
+1. Use markdown code blocks with file paths
 2. Show clear before/after diffs when modifying existing code
-3. Reference specific files, risk scores, and patterns from the context
+3. Reference specific files, risk scores, and patterns from context
 4. Be concise but actionable
-5. Include file paths in every code block for easy copying
+5. Include file paths in every code block for easy copying"""
 
-Example format:
-```typescript
-// File: src/components/Header.tsx
-interface HeaderProps {{
-  showSearch: boolean;  // <- ADD THIS LINE
-}}
-```"""
-        temperature = 0.7
+        temperature = OPTIMAL_TEMPS.get(model, 0.7)
         user_message = message
 
+    # ═══════════════════════════════════════════════════
+    # Build Messages with History
+    # ═══════════════════════════════════════════════════
+
     messages = []
+
     if system_content:
-        messages.append({
-            "role": "system",
-            "content": system_content
-        })
+        messages.append({"role": "system", "content": system_content})
 
     # Add recent chat history (last 10 messages)
     if multi_project_mode:
-        # Use unified multi-project history
         messages.extend(MULTI_PROJECT_CHAT_HISTORY[-10:])
     else:
-        # Use project-specific chat history
         if project_id and project_id in PROJECTS:
             messages.extend(PROJECTS[project_id]['chat_history'][-10:])
 
     # Add current message
     messages.append({"role": "user", "content": user_message})
+
+    # ═══════════════════════════════════════════════════
+    # API Call
+    # ═══════════════════════════════════════════════════
 
     response = client.chat.completions.create(
         model=model,
@@ -585,16 +723,61 @@ interface HeaderProps {{
 
     # Update chat history
     if multi_project_mode:
-        # Store in unified multi-project history
         MULTI_PROJECT_CHAT_HISTORY.append({"role": "user", "content": message})
         MULTI_PROJECT_CHAT_HISTORY.append({"role": "assistant", "content": assistant_message})
     else:
-        # Store in project-specific chat history
         if project_id and project_id in PROJECTS:
             PROJECTS[project_id]['chat_history'].append({"role": "user", "content": message})
             PROJECTS[project_id]['chat_history'].append({"role": "assistant", "content": assistant_message})
 
     return assistant_message
+
+def call_deepseek_structured(message, context, model='deepseek-coder', project_id=None):
+    """Call DeepSeek with structured JSON output"""
+    global DEEPSEEK_API_KEY
+
+    if not DEEPSEEK_API_KEY:
+        raise ValueError("DEEPSEEK_API_KEY not set")
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("OpenAI library not installed")
+
+    client = OpenAI(
+        api_key=DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com"
+    )
+
+    system_content = f"""Analyze the codebase and return JSON:
+{{
+    "summary": "Brief overview of findings",
+    "issues": [{{
+        "severity": "high|medium|low",
+        "file": "path/to/file.py",
+        "line": 42,
+        "type": "security|performance|maintainability|bug",
+        "description": "Issue description",
+        "fix": "Recommended fix"
+    }}],
+    "recommendations": ["List of improvement suggestions"]
+}}
+
+Codebase Context:
+{context}"""
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": message}
+        ],
+        temperature=0.7,
+        max_tokens=2000,
+        response_format={"type": "json_object"}
+    )
+
+    return json.loads(response.choices[0].message.content)
 
 class Handler(BaseHTTPRequestHandler):
     def get_project_id_from_query(self):
@@ -799,6 +982,25 @@ class Handler(BaseHTTPRequestHandler):
                     'model': model,
                     'context_size': len(context)
                 })
+            except ValueError as e:
+                self.send_error(400, str(e))
+            except Exception as e:
+                self.send_error(500, str(e))
+
+        elif p == '/api/chat/structured':
+            # Structured JSON analysis endpoint
+            message = data.get('message', '').strip()
+            model = data.get('model', SELECTED_MODEL)
+            project_id = data.get('project_id', CURRENT_PROJECT_ID)
+
+            if not message:
+                self.send_error(400, 'Missing message parameter')
+                return
+
+            try:
+                context = build_codebase_context(message, project_id)
+                result = call_deepseek_structured(message, context, model, project_id)
+                self._json(result)
             except ValueError as e:
                 self.send_error(400, str(e))
             except Exception as e:
