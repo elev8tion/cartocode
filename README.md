@@ -154,6 +154,36 @@ Files are scored 0-100 based on:
 5. **Technical Debt** - Find high-risk, untested files
 6. **Cross-Project Work** - Work on Project A while Claude analyzes Project B
 
+## 🧪 Testing
+
+Cartographer includes comprehensive test suites:
+
+### DeepSeek Optimization Tests
+```bash
+# Run comprehensive system tests (requires DeepSeek API key)
+export DEEPSEEK_API_KEY='your-key-here'
+python3 test_deepseek_system.py
+
+# Validate test structure
+python3 validate_test_suite.py
+```
+
+**Coverage:** 22 tests across 7 phases including:
+- Model switching (coder/reasoner/chat)
+- Token limit enforcement (128K for coder/reasoner, 64K for chat)
+- Strategic context placement validation
+- Relevance-based file selection
+- Real API integration testing
+- Error handling and edge cases
+
+See [TEST_DEEPSEEK_README.md](TEST_DEEPSEEK_README.md) for complete documentation or [QUICKSTART_DEEPSEEK_TESTS.md](QUICKSTART_DEEPSEEK_TESTS.md) for quick start.
+
+### Multi-Project Tests
+```bash
+# Test multi-project chat functionality
+python3 test_multi_project_chat.py
+```
+
 ## 🔒 Security
 
 The MCP bridge includes:
