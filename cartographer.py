@@ -221,6 +221,7 @@ class Scanner:
 PROJECTS = {}  # {project_id: {'root': path, 'scan_data': {...}, 'chat_history': []}}
 CURRENT_PROJECT_ID = None  # Currently active project
 MAX_PROJECTS = 2  # Enforce limit
+MULTI_PROJECT_CHAT_HISTORY = []  # Unified history for multi-project mode
 
 RECENT_PROJECTS_FILE = Path.home() / '.cartographer_history'
 
@@ -328,28 +329,29 @@ def load_project(path):
     }
 
 # ── DeepSeek Chat Functions ──
-def build_codebase_context(query, project_id=None, include_files=[]):
-    """Build intelligent context from Scanner data without vector DB"""
+def _build_single_project_context(query, project_id=None, include_files=[], max_files=10):
+    """Build intelligent context from Scanner data for a single project"""
     global CURRENT_PROJECT_ID, PROJECTS
 
     if project_id is None:
         project_id = CURRENT_PROJECT_ID
 
     if not project_id or project_id not in PROJECTS:
-        return "No codebase loaded."
+        return ""
 
     # Use local reference to this project's scan data
     SCAN_DATA = PROJECTS[project_id]['scan_data']
 
     if not SCAN_DATA or not SCAN_DATA.get('nodes'):
-        return "No codebase loaded."
+        return ""
 
     context_parts = []
 
     # 1. Project overview (metadata)
     meta = SCAN_DATA.get('metadata', {})
+    project_name = meta.get('project_name', 'Unknown')
     context_parts.append(
-        f"PROJECT: {meta.get('project_name', 'Unknown')}\n"
+        f"PROJECT: {project_name} (ID: {project_id})\n"
         f"HEALTH: {meta.get('health_score', 0)}/100\n"
         f"LANGUAGES: {', '.join(meta.get('languages', []))}\n"
         f"TOTAL FILES: {meta.get('total_files', 0)}"
@@ -402,11 +404,18 @@ def build_codebase_context(query, project_id=None, include_files=[]):
                 relevant_files.append(node['id'])
                 break
 
-    # Add explicitly requested files from API
-    relevant_files.extend(include_files)
+    # Add explicitly requested files from API - handle project-qualified file IDs
+    for file_id in include_files:
+        # Remove project prefix if present (format: project_id:file_id)
+        if ':' in file_id:
+            pid, fid = file_id.split(':', 1)
+            if pid == project_id:
+                relevant_files.append(fid)
+        else:
+            relevant_files.append(file_id)
 
-    # Deduplicate and limit to 10 files
-    relevant_files = list(dict.fromkeys(relevant_files))[:10]
+    # Deduplicate and limit to max_files
+    relevant_files = list(dict.fromkeys(relevant_files))[:max_files]
 
     # 4. Add file details with plain_english explanations
     for file_id in relevant_files:
@@ -421,13 +430,74 @@ def build_codebase_context(query, project_id=None, include_files=[]):
                 f"EXPLANATION: {node.get('plain_english', 'No explanation available.')}"
             )
 
-    # Join and truncate to ~8K tokens (~32K chars)
+    # Join contexts
     full_context = '\n\n'.join(context_parts)
-    return full_context[:32000]  # Safety truncate
+    return full_context
 
-def call_deepseek(message, context, model='deepseek-chat', project_id=None):
+
+def build_codebase_context(query, project_id=None, include_files=[]):
+    """Backward-compatible wrapper for single project context building"""
+    context = _build_single_project_context(query, project_id, include_files, max_files=10)
+    if not context:
+        return "No codebase loaded."
+    # Truncate to ~8K tokens (~32K chars)
+    return context[:32000]
+
+
+def build_multi_project_context(query, project_ids, include_files=[]):
+    """Build unified context from multiple projects with equal 50/50 split"""
+    global PROJECTS
+
+    # Validate inputs
+    if not project_ids or len(project_ids) == 0:
+        return "No projects loaded."
+
+    # If only one project, delegate to single project builder
+    if len(project_ids) == 1:
+        return build_codebase_context(query, project_ids[0], include_files)
+
+    # Multi-project mode: build context for each project with 5-file limit
+    contexts = []
+
+    for project_id in project_ids[:2]:  # Max 2 projects
+        if project_id not in PROJECTS:
+            continue
+
+        # Filter include_files for this project
+        project_include_files = []
+        for file_id in include_files:
+            if ':' in file_id:
+                pid, fid = file_id.split(':', 1)
+                if pid == project_id:
+                    project_include_files.append(file_id)
+            # If no project prefix, skip (ambiguous which project it belongs to)
+
+        # Build context for this project with 5-file limit
+        project_context = _build_single_project_context(
+            query,
+            project_id,
+            project_include_files,
+            max_files=5
+        )
+
+        if project_context:
+            # Add clear project separator
+            project_name = PROJECTS[project_id].get('name', 'Unknown')
+            separator = f"\n{'='*60}\n=== PROJECT: {project_name} (ID: {project_id}) ===\n{'='*60}\n"
+            contexts.append(separator + project_context)
+
+    # Combine contexts
+    if not contexts:
+        return "No valid projects loaded."
+
+    combined_context = '\n\n'.join(contexts)
+
+    # Safety truncate to ~32K chars
+    return combined_context[:32000]
+
+def call_deepseek(message, context, model='deepseek-chat', project_id=None, multi_project_mode=False):
     """Make API call to DeepSeek with model-specific optimization"""
-    global CURRENT_PROJECT_ID, PROJECTS, DEEPSEEK_API_KEY
+    global CURRENT_PROJECT_ID, PROJECTS, DEEPSEEK_API_KEY, MULTI_PROJECT_CHAT_HISTORY
 
     if project_id is None:
         project_id = CURRENT_PROJECT_ID
@@ -492,9 +562,14 @@ interface HeaderProps {{
             "content": system_content
         })
 
-    # Add recent chat history (last 10 messages) - Use project-specific chat history
-    if project_id and project_id in PROJECTS:
-        messages.extend(PROJECTS[project_id]['chat_history'][-10:])
+    # Add recent chat history (last 10 messages)
+    if multi_project_mode:
+        # Use unified multi-project history
+        messages.extend(MULTI_PROJECT_CHAT_HISTORY[-10:])
+    else:
+        # Use project-specific chat history
+        if project_id and project_id in PROJECTS:
+            messages.extend(PROJECTS[project_id]['chat_history'][-10:])
 
     # Add current message
     messages.append({"role": "user", "content": user_message})
@@ -508,10 +583,16 @@ interface HeaderProps {{
 
     assistant_message = response.choices[0].message.content
 
-    # Update chat history - Store in project-specific chat history
-    if project_id and project_id in PROJECTS:
-        PROJECTS[project_id]['chat_history'].append({"role": "user", "content": message})
-        PROJECTS[project_id]['chat_history'].append({"role": "assistant", "content": assistant_message})
+    # Update chat history
+    if multi_project_mode:
+        # Store in unified multi-project history
+        MULTI_PROJECT_CHAT_HISTORY.append({"role": "user", "content": message})
+        MULTI_PROJECT_CHAT_HISTORY.append({"role": "assistant", "content": assistant_message})
+    else:
+        # Store in project-specific chat history
+        if project_id and project_id in PROJECTS:
+            PROJECTS[project_id]['chat_history'].append({"role": "user", "content": message})
+            PROJECTS[project_id]['chat_history'].append({"role": "assistant", "content": assistant_message})
 
     return assistant_message
 
@@ -567,6 +648,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'messages': PROJECTS[project_id]['chat_history']})
             else:
                 self._json({'messages': []})
+        elif p == '/api/chat/multi-history':
+            global MULTI_PROJECT_CHAT_HISTORY
+            self._json({'messages': MULTI_PROJECT_CHAT_HISTORY})
         elif p in ('/','/index.html'): self._html()
         else: self.send_error(404)
 
@@ -692,6 +776,8 @@ class Handler(BaseHTTPRequestHandler):
             message = data.get('message', '').strip()
             model = data.get('model', SELECTED_MODEL)
             include_files = data.get('include_files', [])
+            multi_project_mode = data.get('multi_project_mode', False)
+            project_ids = data.get('project_ids', [])
             project_id = data.get('project_id', CURRENT_PROJECT_ID)
 
             if not message:
@@ -700,10 +786,13 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 # Build context from codebase
-                context = build_codebase_context(message, project_id, include_files)
+                if multi_project_mode and len(project_ids) > 1:
+                    context = build_multi_project_context(message, project_ids, include_files)
+                else:
+                    context = build_codebase_context(message, project_id, include_files)
 
                 # Call DeepSeek API
-                response = call_deepseek(message, context, model, project_id)
+                response = call_deepseek(message, context, model, project_id, multi_project_mode)
 
                 self._json({
                     'response': response,
@@ -720,6 +809,12 @@ class Handler(BaseHTTPRequestHandler):
             project_id = data.get('project_id', CURRENT_PROJECT_ID)
             if project_id in PROJECTS:
                 PROJECTS[project_id]['chat_history'] = []
+            self._json({'success': True})
+
+        elif p == '/api/chat/multi-clear':
+            # Clear multi-project chat history
+            global MULTI_PROJECT_CHAT_HISTORY
+            MULTI_PROJECT_CHAT_HISTORY = []
             self._json({'success': True})
 
         elif p == '/api/chat/config':

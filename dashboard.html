@@ -549,6 +549,8 @@ pre{padding:var(--spacing-md);margin:0;white-space:pre-wrap;word-wrap:break-word
 let D=null,sel=null,sel2=null,hov=null,vm='graph',search='',langF='all',conF='',riskT=0,sf='risk_score',sd=-1,pos={},tx={x:0,y:0,s:1},drag=false,ds={x:0,y:0},dragStart={x:0,y:0},agentM=false,svgEventsAttached=false,searchTimeout=null,codeViewerOpen=false,pathFinderMode=false,compareMode=false,rafPending=false,layoutMode='hybrid';
 // Chat state
 let chatOpen=false,chatMessages=[],chatModel='deepseek-chat';
+// Multi-project chat state
+let multiProjectMode=false,multiProjectChatMessages=[];
 // Multi-project state
 let PROJECTS = {};           // {projectId: scanData}
 let currentProjectId = null; // Active project ID
@@ -857,6 +859,15 @@ function closeProjectTab(projectId, event){
     D = PROJECTS[currentProjectId];
   }
 
+  // Auto-disable multi-project mode if we drop below 2 projects
+  if(multiProjectMode && projectTabs.length < 2){
+    multiProjectMode = false;
+    // Reload single-project history for remaining project
+    if(chatOpen){
+      loadSingleProjectChatHistory().then(()=>renderChatMessages());
+    }
+  }
+
   sel = null;
   sel2 = null;
   render();
@@ -883,11 +894,13 @@ async function viewCode(node){
 async function openChat(){
   chatOpen=true;
 
-  // Load existing chat history for current project
+  // Load existing chat history based on mode
   try{
-    const resp=await fetch(`/api/chat/history?project_id=${currentProjectId}`);
-    const data=await resp.json();
-    chatMessages=data.messages||[];
+    if(multiProjectMode){
+      await loadMultiProjectChatHistory();
+    }else{
+      await loadSingleProjectChatHistory();
+    }
   }catch(e){
     console.error('Failed to load chat history:',e);
   }
@@ -899,6 +912,49 @@ async function openChat(){
 function closeChat(){
   chatOpen=false;
   render();
+}
+
+async function toggleMultiProjectMode(){
+  // Check if we have at least 2 projects
+  if(projectTabs.length<2){
+    alert('Multi-project mode requires at least 2 loaded projects');
+    return;
+  }
+
+  // Toggle mode
+  multiProjectMode=!multiProjectMode;
+
+  // Load appropriate history
+  if(multiProjectMode){
+    await loadMultiProjectChatHistory();
+  }else{
+    await loadSingleProjectChatHistory();
+  }
+
+  // Re-render
+  render();
+  setTimeout(()=>renderChatMessages(),100);
+}
+
+async function loadMultiProjectChatHistory(){
+  try{
+    const resp=await fetch('/api/chat/multi-history');
+    const data=await resp.json();
+    multiProjectChatMessages=data.messages||[];
+    chatMessages=multiProjectChatMessages;
+  }catch(e){
+    console.error('Failed to load multi-project chat history:',e);
+  }
+}
+
+async function loadSingleProjectChatHistory(){
+  try{
+    const resp=await fetch(`/api/chat/history?project_id=${currentProjectId}`);
+    const data=await resp.json();
+    chatMessages=data.messages||[];
+  }catch(e){
+    console.error('Failed to load single-project chat history:',e);
+  }
 }
 
 async function sendChatMessage(){
@@ -917,16 +973,29 @@ async function sendChatMessage(){
   renderChatMessages();
 
   try{
+    // Build request payload based on mode
+    const payload={
+      message:message,
+      model:chatModel,
+      stream:false
+    };
+
+    if(multiProjectMode&&projectTabs.length>=2){
+      // Multi-project mode
+      payload.multi_project_mode=true;
+      payload.project_ids=projectTabs;
+      // Include selected file with project prefix if any
+      payload.include_files=sel?[`${currentProjectId}:${sel.id}`]:[];
+    }else{
+      // Single-project mode
+      payload.project_id=currentProjectId;
+      payload.include_files=sel?[sel.id]:[];
+    }
+
     const resp=await fetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        message:message,
-        model:chatModel,
-        stream:false,
-        project_id:currentProjectId,  // Include current project ID
-        include_files:sel?[sel.id]:[]  // Include selected file if any
-      })
+      body:JSON.stringify(payload)
     });
 
     if(!resp.ok){
@@ -939,6 +1008,12 @@ async function sendChatMessage(){
     // Remove loading, add real response
     chatMessages=chatMessages.filter(m=>m.id!==loadingId);
     chatMessages.push({role:'assistant',content:data.response});
+
+    // Update appropriate history storage
+    if(multiProjectMode){
+      multiProjectChatMessages=chatMessages.slice();
+    }
+
     renderChatMessages();
 
   }catch(e){
@@ -980,6 +1055,13 @@ function renderChatMessages(){
 }
 
 function formatCodeBlocks(content) {
+  // First, detect and style project labels (multi-project mode)
+  // Pattern: === PROJECT: name (ID: id) ===
+  const projectLabelPattern = /===+\s*PROJECT:\s*([^(]+)\s*\(ID:\s*([^)]+)\)\s*===+/g;
+  content = content.replace(projectLabelPattern, (match, projectName, projectId) => {
+    return `<div style="margin:var(--spacing-lg) 0;padding:var(--spacing-md);background:linear-gradient(135deg,var(--accent),var(--accent-dark));border-radius:var(--radius-md);border-left:4px solid var(--accent-dark)"><div style="display:flex;align-items:center;gap:var(--spacing-sm)"><span style="font-size:16px">📁</span><span style="color:#fff;font-weight:600;font-size:13px">${esc(projectName.trim())}</span><span style="color:rgba(255,255,255,0.7);font-size:11px">(${esc(projectId.trim())})</span></div></div>`;
+  });
+
   // Pattern: ```lang\n// File: path\ncode\n``` or ```lang\ncode\n```
   const codeBlockPattern = /```(\w+)?\n([\s\S]+?)```/g;
 
@@ -1078,11 +1160,22 @@ function copyForTerminal(btn) {
 async function clearChatHistory(){
   if(!confirm('Clear all chat history?'))return;
 
-  await fetch('/api/chat/clear',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({project_id:currentProjectId})
-  });
+  if(multiProjectMode){
+    // Clear unified multi-project history
+    await fetch('/api/chat/multi-clear',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'}
+    });
+    multiProjectChatMessages=[];
+  }else{
+    // Clear single-project history
+    await fetch('/api/chat/clear',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({project_id:currentProjectId})
+    });
+  }
+
   chatMessages=[];
   renderChatMessages();
 }
@@ -1144,11 +1237,26 @@ function insertPromptTemplate(key) {
 
 function exportChatToMarkdown() {
   const timestamp = new Date().toISOString().split('T')[0];
-  const projectName = data?.metadata?.project_name || 'Unknown';
 
   // Build markdown content
   let markdown = `# DeepSeek Code Change Proposal\n\n`;
-  markdown += `**Project:** ${projectName}\n`;
+
+  // Add mode and project information
+  if(multiProjectMode&&projectTabs.length>=2){
+    markdown += `**Mode:** Multi-Project Analysis\n`;
+    markdown += `**Projects:**\n`;
+    projectTabs.forEach(pid=>{
+      const proj=PROJECTS[pid];
+      if(proj){
+        markdown += `  - ${proj.metadata.project_name} (${pid})\n`;
+      }
+    });
+    markdown += `**Context:** 5 files per project (10 total)\n`;
+  }else{
+    const projectName = D?.metadata?.project_name || 'Unknown';
+    markdown += `**Project:** ${projectName}\n`;
+  }
+
   markdown += `**Date:** ${timestamp}\n`;
   markdown += `**Model:** ${chatModel === 'deepseek-chat' ? 'DeepSeek V3' : 'DeepSeek R1'}\n\n`;
   markdown += `---\n\n`;
@@ -1477,10 +1585,37 @@ function render(){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--spacing-lg);padding-bottom:var(--spacing-md);border-bottom:1px solid var(--border)">
           <div>
             <h3 style="color:var(--text);font-size:18px;font-weight:700">💬 Codebase Chat</h3>
-            <p style="color:var(--text3);font-size:12px">Ask questions about your project</p>
+            <p style="color:var(--text3);font-size:12px">Ask questions about your project${projectTabs.length>=2?' (or both projects)':''}</p>
           </div>
-          <button class="close-btn" onclick="closeChat()">✕</button>
+          <div style="display:flex;align-items:center;gap:var(--spacing-md)">
+            ${projectTabs.length>=2?`
+              <button
+                class="btn ${multiProjectMode?'btn-accent':''}"
+                onclick="toggleMultiProjectMode()"
+                style="font-size:11px;padding:6px 12px"
+              >
+                ${multiProjectMode?'✓ Multi-Project':'Single Project'}
+              </button>
+            `:''}
+            <button class="close-btn" onclick="closeChat()">✕</button>
+          </div>
         </div>
+
+        <!-- Multi-project info banner -->
+        ${multiProjectMode&&projectTabs.length>=2?`
+          <div style="margin-bottom:var(--spacing-lg);padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--accent);border-radius:var(--radius-md)">
+            <div style="display:flex;align-items:center;gap:var(--spacing-sm);margin-bottom:var(--spacing-xs)">
+              <span style="color:var(--accent);font-size:11px;font-weight:600">📁 ACTIVE PROJECTS:</span>
+              ${projectTabs.map(pid=>{
+                const proj=PROJECTS[pid];
+                return`<span style="background:var(--accent);color:#fff;padding:2px 8px;border-radius:var(--radius-sm);font-size:10px">${proj?proj.metadata.project_name:pid}</span>`;
+              }).join('')}
+            </div>
+            <div style="color:var(--text3);font-size:10px">
+              Context: 5 files per project (10 total) · Unified chat history
+            </div>
+          </div>
+        `:''}
 
         <!-- Model Selector -->
         <div style="margin-bottom:var(--spacing-lg)">

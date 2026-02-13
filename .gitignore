@@ -22,3 +22,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+test_results_*.json
+MULTI_PROJECT_ISSUES.md
+TEST_COVERAGE.md
