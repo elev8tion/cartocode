@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+#
+# Cartographer — macOS App Bundle Launcher (Enhanced)
+# Launches the Cartographer codebase visualization tool
+#
+
+set -euo pipefail
+
+# ---- Colors for terminal output (when launched from terminal) ----
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ---- Resolve project directory from bundle location ----
+BUNDLE_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_DIR="$(dirname "$BUNDLE_DIR")"
+
+# ---- Validate project structure ----
+if [ ! -f "$PROJECT_DIR/cartographer.py" ] || [ ! -f "$PROJECT_DIR/dashboard.html" ]; then
+    osascript -e 'display dialog "Error: Could not find Cartographer project files.\n\nExpected location:\n'"$PROJECT_DIR"'\n\nFiles needed:\n• cartographer.py\n• dashboard.html" buttons {"OK"} default button 1 with icon stop with title "Cartographer"'
+    exit 1
+fi
+
+cd "$PROJECT_DIR"
+
+# ---- Use venv Python (has all required dependencies) ----
+PYTHON_BIN="$PROJECT_DIR/venv/bin/python3"
+
+if [ ! -f "$PYTHON_BIN" ]; then
+    # Fallback to system python3
+    PYTHON_BIN="/opt/homebrew/bin/python3"
+    if [ ! -f "$PYTHON_BIN" ]; then
+        PYTHON_BIN="python3"
+    fi
+    if ! command -v "$PYTHON_BIN" &> /dev/null; then
+        osascript -e 'display dialog "Python 3 is not installed.\n\nPlease run setup.sh to create a virtual environment with dependencies." buttons {"OK"} default button 1 with icon stop with title "Cartographer"'
+        exit 1
+    fi
+fi
+
+# ---- Check for Option key modifier for clean start ----
+# Hold Option (⌥) while launching for clean start
+CLEAN_FLAG=""
+
+# Check if Option key is held (modifier flags in environment)
+# This works when launched via Finder with Option held
+if [ "${CLEAN_START:-}" = "1" ]; then
+    CLEAN_FLAG="--clean"
+    osascript -e 'display notification "Starting with clean history..." with title "Cartographer" subtitle "Hold ⌥ Option for clean start"'
+fi
+
+# ---- Find available port ----
+PORT=3000
+check_port() {
+    lsof -i :"$1" >/dev/null 2>&1
+}
+
+while check_port $PORT && [ $PORT -lt 3010 ]; do
+    PORT=$((PORT + 1))
+done
+
+if [ $PORT -ge 3010 ]; then
+    osascript -e 'display dialog "Could not find an available port between 3000-3009.\n\nPlease close some applications and try again." buttons {"OK"} default button 1 with icon stop with title "Cartographer"'
+    exit 1
+fi
+
+# ---- Show starting notification ----
+osascript -e 'display notification "Launching server..." with title "Cartographer" subtitle "Port: '"$PORT"'"'
+
+# ---- Create log directory ----
+LOG_DIR="$HOME/.cartographer/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/cartographer-$(date +%Y%m%d-%H%M%S).log"
+
+# ---- Start the server in background ----
+"$PYTHON_BIN" -u cartographer.py $CLEAN_FLAG --port $PORT > "$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+
+# Save PID for later cleanup
+PID_FILE="$HOME/.cartographer/server.pid"
+echo "$SERVER_PID" > "$PID_FILE"
+
+# ---- Wait for server to start ----
+sleep 2
+
+# Check if server is still running
+if ! kill -0 $SERVER_PID 2>/dev/null; then
+    # Server crashed, show error
+    error_log=$(tail -20 "$LOG_FILE")
+    osascript -e 'display dialog "Server failed to start.\n\nCheck the log for details:\n'"$LOG_FILE"'\n\nRecent errors:\n'"${error_log:0:200}"'" buttons {"OK"} default button 1 with icon stop with title "Cartographer"'
+    exit 1
+fi
+
+# ---- Open browser ----
+sleep 1
+# Use osascript to open URL in default browser
+osascript -e 'open location "http://localhost:'"$PORT"'"' 2>/dev/null
+
+# ---- Show success notification ----
+osascript -e 'display notification "Server is running on port '"$PORT"'" with title "Cartographer" subtitle "Ready to analyze your codebase!"'
+
+# Don't show dialog - notification is enough for a smooth UX
+
+# Exit cleanly (server continues in background)
+exit 0
