@@ -996,96 +996,115 @@ pre{padding:var(--spacing-md);margin:0;white-space:pre-wrap;word-wrap:break-word
   font-weight: 500;
   cursor: default;
 }
+#project-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
 </style>
 </head>
 <body>
 <div id="app">
-  <div class="header">
-    <div class="logo"><span>🗺️</span> <span>Codebase Cartographer</span></div>
-    <div style="display:flex; gap:var(--spacing-md); align-items:center;">
-      <div id="project-tabs-container" class="tabs-container"></div>
-      <button class="btn" onclick="showProjectPicker()">📂 Open</button>
-      <button class="btn btn-accent" onclick="rescan()">🔄 Rescan</button>
-      <button class="btn" onclick="openChat()" id="chat-toggle-btn">💬 AI Chat</button>
-      <button class="btn" onclick="showChatConfig()">⚙️ Settings</button>
+  <!-- Persistent UI Structure -->
+  <div id="main-layout" style="display:none; flex-direction:column; height:100vh;">
+    <div class="header">
+      <div class="logo"><span>🗺️</span> <span>Codebase Cartographer</span></div>
+      <div style="display:flex; gap:var(--spacing-md); align-items:center;">
+        <div id="project-tabs-container" class="tabs-container"></div>
+        <button class="btn" onclick="showProjectPicker()">📂 Open</button>
+        <button class="btn btn-accent" onclick="rescan()">🔄 Rescan</button>
+        <button class="btn" onclick="openChat()" id="chat-toggle-btn">💬 AI Chat</button>
+        <button class="btn" onclick="showChatConfig()">⚙️ Settings</button>
+      </div>
+    </div>
+
+    <div class="main" style="flex:1; display:flex; overflow:hidden;">
+      <div class="canvas-container" style="flex:1; position:relative; display:flex; flex-direction:column;">
+        <div class="toolbar">
+          <input type="text" class="search-input" placeholder="Search files, symbols, concerns..." oninput="debounceSearch(this.value)">
+          <select onchange="langF=this.value;render()">
+            <option value="all">All Languages</option>
+            <option value="python">Python</option>
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="swift">Swift</option>
+            <option value="rust">Rust</option>
+            <option value="go">Go</option>
+          </select>
+          <div class="view-tabs">
+            <button class="view-tab" onclick="vm='graph';render()" id="tab-graph">Graph</button>
+            <button class="view-tab" onclick="vm='list';render()" id="tab-list">List</button>
+            <button class="view-tab" onclick="vm='concern';render()" id="tab-concern">Concerns</button>
+            <button class="view-tab" onclick="vm='matrix';render()" id="tab-matrix">Matrix</button>
+          </div>
+        </div>
+        <div id="canvas-area" style="flex:1; position:relative; overflow:hidden;">
+          <div class="canvas" id="canvas"></div>
+        </div>
+      </div>
+
+      <!-- AI Chat Sidebar (Persistent) -->
+      <div id="chat-sidebar" class="panel" style="display:none; width:450px; max-width:450px; border-left:1px solid var(--border); flex-direction:column; background:var(--bg2)">
+        <div class="sidebar-header" style="padding:var(--spacing-lg); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg2)">
+          <div style="display:flex; align-items:center; gap:var(--spacing-sm)">
+            <span style="font-size:18px">🤖</span>
+            <span style="font-weight:700; font-size:15px">DeepSeek AI</span>
+            <div id="model-badge" class="chat-status-badge thinking" style="font-size:9px; padding:2px 6px">V3</div>
+          </div>
+          <div style="display:flex; gap:var(--spacing-sm)">
+            <button class="close-btn" onclick="clearChatHistory()" title="Clear Chat" style="width:32px; height:32px">🗑️</button>
+            <button class="close-btn" onclick="closeChat()" style="width:32px; height:32px">✕</button>
+          </div>
+        </div>
+
+        <!-- Context Manager -->
+        <div id="context-bar" style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg3); border-bottom:1px solid var(--border); font-size:11px; display:flex; align-items:center; gap:var(--spacing-md); overflow-x:auto">
+          <span style="color:var(--text3); white-space:nowrap">Context:</span>
+          <div id="context-pills" style="display:flex; gap:4px">
+            <span style="color:var(--text3); font-style:italic">No files attached</span>
+          </div>
+        </div>
+
+        <!-- Model Selector -->
+        <div style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg2); border-bottom:1px solid var(--border); display:flex; gap:var(--spacing-sm)">
+          <button class="btn btn-sm" id="model-chat-btn" onclick="setChatModel('deepseek-chat')" style="flex:1; font-size:11px; padding:4px">DeepSeek V3 (Fast)</button>
+          <button class="btn btn-sm" id="model-reasoner-btn" onclick="setChatModel('deepseek-reasoner')" style="flex:1; font-size:11px; padding:4px">DeepSeek R1 (Reasoning)</button>
+        </div>
+
+        <div id="chatMessages" style="flex:1; overflow-y:auto; padding:var(--spacing-lg); display:flex; flex-direction:column; gap:var(--spacing-lg); scroll-behavior:smooth">
+          <!-- Messages here -->
+        </div>
+
+        <div class="chat-input-area" style="padding:var(--spacing-lg); background:var(--bg2); border-top:1px solid var(--border)">
+          <div id="prompt-templates" style="display:flex; gap:var(--spacing-xs); overflow-x:auto; margin-bottom:var(--spacing-md); padding-bottom:4px; scrollbar-width:none">
+            <!-- Template buttons here -->
+          </div>
+          <div class="chat-input-wrapper">
+            <textarea id="chatInput" class="chat-input-textarea" placeholder="Ask about the codebase... (Cmd+Enter to send)" onkeydown="if(event.metaKey && event.key==='Enter') sendChatMessage()"></textarea>
+            <button class="chat-send-btn" onclick="sendChatMessage()">↑</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:var(--spacing-sm)">
+             <button class="btn" style="font-size:10px; padding:2px 8px" onclick="toggleMultiProjectMode()" id="multi-project-toggle">📁 Multi-Project: OFF</button>
+             <button class="btn" style="font-size:10px; padding:2px 8px" onclick="exportChatToMarkdown()">📥 Export Proposal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="detail-panel">
+        <!-- File details here -->
+      </div>
     </div>
   </div>
 
-  <div class="main">
-    <div class="canvas-container" style="flex:1; position:relative; display:flex; flex-direction:column;">
-      <div class="toolbar">
-        <input type="text" class="search-input" placeholder="Search files, symbols, concerns..." oninput="debounceSearch(this.value)">
-        <select onchange="langF=this.value;render()">
-          <option value="all">All Languages</option>
-          <option value="python">Python</option>
-          <option value="javascript">JavaScript</option>
-          <option value="typescript">TypeScript</option>
-          <option value="swift">Swift</option>
-          <option value="rust">Rust</option>
-          <option value="go">Go</option>
-        </select>
-        <div class="view-tabs">
-          <button class="view-tab" onclick="vm='graph';render()" id="tab-graph">Graph</button>
-          <button class="view-tab" onclick="vm='list';render()" id="tab-list">List</button>
-          <button class="view-tab" onclick="vm='concern';render()" id="tab-concern">Concerns</button>
-          <button class="view-tab" onclick="vm='matrix';render()" id="tab-matrix">Matrix</button>
-        </div>
-      </div>
-        <div id="canvas-area" style="flex:1; position:relative; overflow:hidden;">
-        <div class="canvas" id="canvas"></div>
-      </div>
-    </div>
-
-    <!-- AI Chat Sidebar (Persistent) -->
-    <div id="chat-sidebar" class="panel" style="display:none; width:450px; max-width:450px; border-left:1px solid var(--border); flex-direction:column; background:var(--bg2)">
-      <div class="sidebar-header" style="padding:var(--spacing-lg); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg2)">
-        <div style="display:flex; align-items:center; gap:var(--spacing-sm)">
-          <span style="font-size:18px">🤖</span>
-          <span style="font-weight:700; font-size:15px">DeepSeek AI</span>
-          <div id="model-badge" class="chat-status-badge thinking" style="font-size:9px; padding:2px 6px">V3</div>
-        </div>
-        <div style="display:flex; gap:var(--spacing-sm)">
-          <button class="close-btn" onclick="clearChatHistory()" title="Clear Chat" style="width:32px; height:32px">🗑️</button>
-          <button class="close-btn" onclick="closeChat()" style="width:32px; height:32px">✕</button>
-        </div>
-      </div>
-
-      <!-- Context Manager -->
-      <div id="context-bar" style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg3); border-bottom:1px solid var(--border); font-size:11px; display:flex; align-items:center; gap:var(--spacing-md); overflow-x:auto">
-        <span style="color:var(--text3); white-space:nowrap">Context:</span>
-        <div id="context-pills" style="display:flex; gap:4px">
-          <span style="color:var(--text3); font-style:italic">No files attached</span>
-        </div>
-      </div>
-
-      <!-- Model Selector -->
-      <div style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg2); border-bottom:1px solid var(--border); display:flex; gap:var(--spacing-sm)">
-        <button class="btn btn-sm" id="model-chat-btn" onclick="setChatModel('deepseek-chat')" style="flex:1; font-size:11px; padding:4px">DeepSeek V3 (Fast)</button>
-        <button class="btn btn-sm" id="model-reasoner-btn" onclick="setChatModel('deepseek-reasoner')" style="flex:1; font-size:11px; padding:4px">DeepSeek R1 (Reasoning)</button>
-      </div>
-
-      <div id="chatMessages" style="flex:1; overflow-y:auto; padding:var(--spacing-lg); display:flex; flex-direction:column; gap:var(--spacing-lg); scroll-behavior:smooth">
-        <!-- Messages here -->
-      </div>
-
-      <div class="chat-input-area" style="padding:var(--spacing-lg); background:var(--bg2); border-top:1px solid var(--border)">
-        <div id="prompt-templates" style="display:flex; gap:var(--spacing-xs); overflow-x:auto; margin-bottom:var(--spacing-md); padding-bottom:4px; scrollbar-width:none">
-          <!-- Template buttons here -->
-        </div>
-        <div class="chat-input-wrapper">
-          <textarea id="chatInput" class="chat-input-textarea" placeholder="Ask about the codebase... (Cmd+Enter to send)" onkeydown="if(event.metaKey && event.key==='Enter') sendChatMessage()"></textarea>
-          <button class="chat-send-btn" onclick="sendChatMessage()">↑</button>
-        </div>
-        <div style="display:flex; justify-content:space-between; margin-top:var(--spacing-sm)">
-           <button class="btn" style="font-size:10px; padding:2px 8px" onclick="toggleMultiProjectMode()" id="multi-project-toggle">📁 Multi-Project: OFF</button>
-           <button class="btn" style="font-size:10px; padding:2px 8px" onclick="exportChatToMarkdown()">📥 Export Proposal</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel" id="detail-panel">
-      <!-- File details here -->
-    </div>
+  <!-- Project Picker Overlay -->
+  <div id="project-picker-overlay" style="display:flex;">
+    <div class="loading"><div class="spinner"></div><div style="color:var(--text3);font-size:13px">Initializing...</div></div>
   </div>
 </div>
 <script>
@@ -2187,10 +2206,13 @@ function smartSearch(query){
   return matches.length>0?matches:D.nodes.filter(n=>n.path.toLowerCase().includes(q)||n.name.toLowerCase().includes(q));
 }
 function showProjectPicker(){
+  const overlay = document.getElementById('project-picker-overlay');
+  overlay.style.display = 'flex';
+  
   fetch('/api/recent-projects').then(r=>r.json()).then(data=>{
     const projects=data.projects||[];
     let h=`
-    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);padding:var(--spacing-xl);overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);padding:var(--spacing-xl);width:100%">
       <div style="max-width:800px;width:100%;margin:auto;animation:fadeIn 0.4s ease-out">
         
         <!-- Hero Section -->
@@ -2227,18 +2249,18 @@ function showProjectPicker(){
     `;
 
     if(projects.length === 0) {
-      h += \`<div style="text-align:center;padding:var(--spacing-4xl);color:var(--text3);font-style:italic">No recent projects yet</div>\`;
+      h += '<div style="text-align:center;padding:var(--spacing-4xl);color:var(--text3);font-style:italic">No recent projects yet</div>';
     } else {
       projects.forEach((p, i) => {
         const name = p.split('/').pop();
-        h += \`
-        <div class="project-item" data-path="\${esc(p)}" style="padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:var(--spacing-sm);cursor:pointer;transition:all var(--transition-base);display:flex;align-items:center;gap:var(--spacing-md);animation:slideInUp 0.3s ease-out;animation-delay:\${i*40}ms;animation-fill-mode:both">
+        h += `
+        <div class="project-item" data-path="${esc(p)}" style="padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:var(--spacing-sm);cursor:pointer;transition:all var(--transition-base);display:flex;align-items:center;gap:var(--spacing-md);animation:slideInUp 0.3s ease-out;animation-delay:${i*40}ms;animation-fill-mode:both">
           <div style="width:32px;height:32px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px">📂</div>
           <div style="flex:1;min-width:0">
-            <div style="color:var(--text);font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">\${esc(name)}</div>
-            <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--fm)">\${esc(p)}</div>
+            <div style="color:var(--text);font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
+            <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--fm)">${esc(p)}</div>
           </div>
-        </div>\`;
+        </div>`;
       });
     }
 
@@ -2246,6 +2268,7 @@ function showProjectPicker(){
             </div>
           </div>
         </div>
+        ${projectTabs.length > 0 ? `<div style="text-align:center; margin-top:var(--spacing-2xl)"><button class="btn" onclick="document.getElementById('project-picker-overlay').style.display='none'">✕ Close Picker</button></div>` : ''}
       </div>
     </div>
     <style>
@@ -2256,11 +2279,14 @@ function showProjectPicker(){
       .project-item:hover { border-color: var(--accent); background: var(--bg4)!important; transform: translateX(4px); }
     </style>`;
 
-    document.getElementById('app').innerHTML = h;
+    overlay.innerHTML = h;
 
     // Re-attach event listeners
     document.querySelectorAll('.project-item').forEach(el => {
-      el.onclick = () => loadProject(el.getAttribute('data-path'));
+      el.onclick = () => {
+        overlay.style.display = 'none';
+        loadProject(el.getAttribute('data-path'));
+      };
     });
     
     const inp = document.getElementById('customPath');
@@ -2269,15 +2295,23 @@ function showProjectPicker(){
       inp.focus();
       inp.onkeypress = e => { if(e.key==='Enter') btn.click() };
     }
-    if(btn) btn.onclick = () => loadProject(inp.value);
+    if(btn) btn.onclick = () => {
+      overlay.style.display = 'none';
+      loadProject(inp.value);
+    };
 
     // Support Drag & Drop
     window.ondragover = e => e.preventDefault();
     window.ondrop = e => {
       e.preventDefault();
       const path = e.dataTransfer.files[0]?.path;
-      if(path) loadProject(path);
+      if(path) {
+        overlay.style.display = 'none';
+        loadProject(path);
+      }
     };
+  });
+}
   });
 }
 function getF(){return D.nodes.filter(n=>{if(n.risk_score<riskT)return false;if(langF!=='all'&&n.language!==langF)return false;if(conF&&!(n.concerns||[]).includes(conF))return false;if(search){const q=search.toLowerCase();if(!n.path.toLowerCase().includes(q)&&!n.name.toLowerCase().includes(q)&&!(n.tags||[]).join(' ').toLowerCase().includes(q))return false}return true})}
@@ -2330,6 +2364,7 @@ function getImpactZone(n){
 
 function render(){
   renderContextPills();
+  
   // Ensure D is synced with current project
   if(currentProjectId && PROJECTS[currentProjectId]){
     D = PROJECTS[currentProjectId];
@@ -2337,11 +2372,17 @@ function render(){
 
   // If no projects at all, show picker
   if(projectTabs.length === 0 || !D){
+    document.getElementById('main-layout').style.display = 'none';
     showProjectPicker();
     return;
   }
 
+  // Hide picker and show main layout
+  document.getElementById('project-picker-overlay').style.display = 'none';
+  document.getElementById('main-layout').style.display = 'flex';
+
   if(!D || !D.nodes || D.nodes.length === 0 || !D.metadata || !D.metadata.project_root){
+    document.getElementById('main-layout').style.display = 'none';
     showProjectPicker();
     return;
   }
