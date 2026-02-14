@@ -2385,18 +2385,21 @@ function render(){
   }
 
   // If no projects at all, show picker
+  const mainLayout = document.getElementById('main-layout');
+  const pickerOverlay = document.getElementById('project-picker-overlay');
+
   if(projectTabs.length === 0 || !D){
-    document.getElementById('main-layout').style.display = 'none';
+    mainLayout.style.display = 'none';
     showProjectPicker();
     return;
   }
 
   // Hide picker and show main layout
-  document.getElementById('project-picker-overlay').style.display = 'none';
-  document.getElementById('main-layout').style.display = 'flex';
+  pickerOverlay.style.display = 'none';
+  mainLayout.style.display = 'flex';
 
   if(!D || !D.nodes || D.nodes.length === 0 || !D.metadata || !D.metadata.project_root){
-    document.getElementById('main-layout').style.display = 'none';
+    mainLayout.style.display = 'none';
     showProjectPicker();
     return;
   }
@@ -2412,142 +2415,149 @@ function render(){
   const dependents=getDependents(sel); // What imports the selected file
   const impact=getImpactZone(sel); // Blast radius: direct + indirect
 
-  // Save focus state before render
-  const activeEl=document.activeElement;
-  const wasSearchFocused=activeEl&&activeEl.classList.contains('search-input');
-  const cursorPos=wasSearchFocused?activeEl.selectionStart:0;
-  const wasRangeFocused=activeEl&&activeEl.type==='range';
-  const wasSelectFocused=activeEl&&activeEl.tagName==='SELECT';
-
-  let h='';
-  // Header
-  h+=`<div class="header"><div style="display:flex;align-items:center"><div class="logo"><span style="color:#ff3b5c;font-size:20px">◆</span><span style="color:#e8ecf4">CODEBASE</span><span style="color:var(--accent)">&nbsp;CARTOGRAPHER</span></div><span style="font-size:11px;color:var(--text3);border-left:1px solid var(--border);padding-left:12px;margin-left:12px;font-family:var(--fm)">${esc(m.project_name)}</span></div><div style="display:flex;gap:8px;align-items:center"><div style="display:flex;align-items:center;gap:8px;padding:4px 14px;border-radius:20px;font-weight:600;font-size:13px;background:${hc(m.health_score)}22;color:${hc(m.health_score)};border:1px solid ${hc(m.health_score)}44">Health: ${m.health_score}/100</div><button class="btn" onclick="showProjectPicker()">📂 Switch Project</button><button class="btn" onclick="agentM=true;render()">📋 Agent Context</button><button class="btn" onclick="openChat()">💬 Chat with Codebase</button><button class="btn" onclick="rescan()">🔄 Rescan</button></div></div>`;
-
-  // Generate project tabs
-  if(projectTabs.length > 0){
-    h += '<div class="project-tabs"><div class="tabs-container">';
+  // 1. Update Project Tabs
+  const tabsContainer = document.getElementById('project-tabs-container');
+  if(tabsContainer){
+    let tabsHtml = '';
     projectTabs.forEach(projectId => {
       const proj = PROJECTS[projectId];
       const isActive = currentProjectId === projectId;
       const projName = proj?.metadata?.project_name || 'Unknown';
       const health = proj?.metadata?.health_score || 0;
 
-      h += `<div class="tab ${isActive?'active':''}" onclick="switchProject('${esc(projectId)}')">
+      tabsHtml += `<div class="tab ${isActive?'active':''}" onclick="switchProject('${esc(projectId)}')">
         <span class="tab-name">${esc(projName)}</span>
         <span style="font-size:10px;opacity:0.8;margin-left:4px;">${health}/100</span>
         <button class="tab-close" onclick="closeProjectTab('${esc(projectId)}',event)">×</button>
       </div>`;
     });
-    h += '</div><button class="tab-add-btn" onclick="showProjectPicker()" title="Load another project">+</button></div>';
+    tabsContainer.innerHTML = tabsHtml;
   }
 
-  // Stats
-  h+=`<div class="stats-bar"><div class="stat"><span class="stat-val" style="color:var(--text)">${m.total_files}</span><span class="stat-label">files</span></div><div class="stat"><span class="stat-val" style="color:var(--accent)">${m.total_edges}</span><span class="stat-label">edges</span></div><div class="stat"><span class="stat-val" style="color:var(--red)">${st.crit}</span><span class="stat-label">critical</span></div><div class="stat"><span class="stat-val" style="color:var(--orange)">${st.high}</span><span class="stat-label">high</span></div><div class="stat"><span class="stat-val" style="color:var(--green)">${st.tested}</span><span class="stat-label">tested</span></div><div class="stat"><span class="stat-val" style="color:var(--purple)">${m.total_binding_points}</span><span class="stat-label">bindings</span></div><div style="flex:1"></div><div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="color:var(--text3)">Risk ≥</span><input id="riskSlider" type="range" min="0" max="100" value="${riskT}" oninput="riskT=+this.value;render()" style="width:80px;accent-color:#ff3b5c"><span style="color:var(--orange);min-width:24px">${riskT}</span></div></div>`;
-  // Toolbar
-  h+=`<div class="toolbar"><input id="searchInput" class="search-input" placeholder="${pathFinderMode?'🔗 Path Finder Mode - Click 2 files':'🔍 Search files, tags...'}" value="${esc(search)}" oninput="debounceSearch(this.value)"><select id="langSelect" onchange="langF=this.value;render()"><option value="all">All Languages</option>${m.languages.map(l=>`<option value="${l}" ${langF===l?'selected':''}>${l}</option>`).join('')}</select><div class="view-tabs">${['graph','list','concerns','matrix'].map(v=>`<div class="view-tab ${vm===v?'active':''}" onclick="vm='${v}';render()">${v}</div>`).join('')}</div><div style="flex:1"></div>${pathFinderMode?`<button class="btn" onclick="pathFinderMode=false;sel=null;sel2=null;render()">✕ Cancel Path Finder</button>`:''} ${cons.slice(0,6).map(c=>`<span class="cpill ${conF===c?'active':''}" onclick="conF=conF==='${c}'?'':'${c}';render()">${c}</span>`).join('')}<span style="font-size:11px;color:var(--text3)">${filt.length}/${D.nodes.length}</span></div>`;
-  h+=`<div class="main"><div class="canvas" id="cv">`;
+  // 2. Update Stats Bar
+  // Find or create stats bar if missing (it should be in main-layout)
+  let statsBar = document.querySelector('.stats-bar');
+  if(!statsBar) {
+    statsBar = document.createElement('div');
+    statsBar.className = 'stats-bar';
+    mainLayout.insertBefore(statsBar, mainLayout.querySelector('.main'));
+  }
+  statsBar.innerHTML = `<div class="stat"><span class="stat-val">${m.total_files}</span><span class="stat-label">files</span></div><div class="stat"><span class="stat-val" style="color:var(--accent)">${m.total_edges}</span><span class="stat-label">edges</span></div><div class="stat"><span class="stat-val" style="color:var(--red)">${st.crit}</span><span class="stat-label">critical</span></div><div class="stat"><span class="stat-val" style="color:var(--orange)">${st.high}</span><span class="stat-label">high</span></div><div class="stat"><span class="stat-val" style="color:var(--green)">${st.tested}</span><span class="stat-label">tested</span></div><div class="stat"><span class="stat-val" style="color:var(--purple)">${m.total_binding_points}</span><span class="stat-label">bindings</span></div><div style="flex:1"></div><div style="display:flex;align-items:center;gap:6px;font-size:11px"><span style="color:var(--text3)">Risk ≥</span><input id="riskSlider" type="range" min="0" max="100" value="${riskT}" oninput="riskT=+this.value;render()" style="width:80px;accent-color:#ff3b5c"><span style="color:var(--orange);min-width:24px">${riskT}</span></div>`;
+
+  // 3. Update Toolbar / Search / View Tabs
+  // (We assume these exist in main-layout and just need their state synced)
+  const searchInput = document.querySelector('.search-input');
+  if(searchInput && document.activeElement !== searchInput) searchInput.value = search;
+  
+  const viewTabs = document.querySelectorAll('.view-tab');
+  viewTabs.forEach(tab => {
+    const mode = tab.id.replace('tab-', '');
+    if(mode === vm) tab.classList.add('active');
+    else tab.classList.remove('active');
+  });
+
+  // 4. Update Canvas Content
+  const canvas = document.getElementById('canvas');
+  let contentHtml = '';
+
   if(vm==='graph'){
-    h+=rGraph(filt,fEdges,conn,hl);
-    h+=`<div class="graph-controls">
-      <button class="graph-control-btn ${layoutMode==='hybrid'?'primary':''}" onclick="toggleLayout()" title="Toggle Layout: ${layoutMode==='hybrid'?'Hybrid Layers':'Force Directed'}">${layoutMode==='hybrid'?'⬓':'◉'}</button>
+    contentHtml = `<svg id="gsvg" viewBox="0 0 ${W} ${H}" style="cursor:grab"><g id="gg" style="transform:translate(${tx.x}px,${tx.y}px) scale(${tx.s})">
+      ${fEdges.map(e=>{
+        const s=pos[e.source], t=pos[e.target];
+        if(!s||!t) return '';
+        const isH=hl.has(`${e.source}-${e.target}`);
+        return `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${isH? (e.source===sel.id?'#f59e0b':'#3b82f6') : 'var(--border)'}" stroke-width="${isH?3:1}" opacity="${isH?1:0.3}" />`;
+      }).join('')}
+      ${filt.map(n=>{
+        const p=pos[n.id]; if(!p) return '';
+        const isS=sel&&sel.id===n.id, isC=conn.has(n.id);
+        const r=nr(n);
+        return `<g class="node" transform="translate(${p.x},${p.y})" onclick="event.stopPropagation();sel=sel&&sel.id==='${n.id}'?null:D.nodes.find(x=>x.id==='${n.id}');render()" onmouseenter="hov='${n.id}';render()" onmouseleave="hov=null;render()" style="cursor:pointer">
+          <circle r="${r}" fill="${rc(n.risk_score)}" stroke="${isS?'#fff':(hov===n.id?'#fff':'none')}" stroke-width="${isS?3:2}" opacity="${!sel||isC?1:0.15}" />
+          <text dy=".3em" text-anchor="middle" fill="${isS?'#fff':'var(--text)'}" style="font-size:${Math.max(10,r/2)}px;font-weight:700;pointer-events:none;opacity:${!sel||isC?1:0.15}">${esc(n.name)}</text>
+        </g>`;
+      }).join('')}
+    </g></svg>
+    <div class="graph-controls">
+      <button class="graph-control-btn ${layoutMode==='hybrid'?'primary':''}" onclick="toggleLayout()" title="Toggle Layout">${layoutMode==='hybrid'?'⬓':'◉'}</button>
       <button class="graph-control-btn primary" onclick="fitToScreen()" title="Fit to Screen">⊡</button>
-      <button class="graph-control-btn" onclick="zoomIn()" title="Zoom In">+</button>
-      <button class="graph-control-btn" onclick="zoomOut()" title="Zoom Out">−</button>
-      <button class="graph-control-btn" onclick="resetZoom()" title="Reset View">⟲</button>
-      <div class="zoom-indicator" id="zoomInd">${Math.round(tx.s*100)}%</div>
+      <button class="graph-control-btn" onclick="zoomIn()">+</button>
+      <button class="graph-control-btn" onclick="zoomOut()">−</button>
+      <button class="graph-control-btn" onclick="resetZoom()">⟲</button>
+      <div class="zoom-indicator">${Math.round(tx.s*100)}%</div>
     </div>`;
-    // Show hint on first load
-    if(layoutMode==='hybrid'&&tx.s===1&&!sel){
-      h+=`<div class="graph-hint" id="graphHint">
-        <h3>📐 Architecture View</h3>
-        <p>Your codebase is organized into layers and clusters. Click <strong>Fit to Screen (⊡)</strong> to see the full architecture!</p>
-        <button class="btn btn-accent" onclick="fitToScreen()">Show Full Architecture</button>
-        <button class="btn" onclick="document.getElementById('graphHint').style.display='none'" style="margin-top:8px">Dismiss</button>
-      </div>`;
-    }
-  }
-  else if(vm==='list')h+=rList(filt);
-  else if(vm==='concerns')h+=rConcerns();
-  else h+=rMatrix(filt);
-  // PHASE 1: Enhanced legend with clear risk zones and dependency info
-  let legendHtml='<div class="legend">';
-
-  if(sel&&vm==='graph'){
-    // When node selected, show dependency legend
-    legendHtml+=`
-      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Dependencies (imports)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Direct Impact</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Blast Radius</div>
-      <span style="color:var(--text3);margin:0 8px">|</span>
-      <span style="color:var(--text3);font-size:11px">${impact.direct.size} files directly affected · ${impact.indirect.size} indirectly</span>
-    `;
-  }else{
-    // Default: show risk zones
-    legendHtml+=`
-      <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>Safe to Change (0-40)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Be Careful (40-70)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Critical (70+)</div>
-      <span style="color:var(--text3);margin:0 8px">|</span>
-      <span style="color:var(--text3);font-size:11px">Click any file to see impact</span>
-    `;
+  } else if(vm==='list') {
+    contentHtml = rList(filt);
+  } else if(vm==='concerns') {
+    contentHtml = rConcerns();
+  } else {
+    contentHtml = rMatrix(filt);
   }
 
-  legendHtml+='</div>';
-  h+=legendHtml+'</div>';
-  h+=`<div class="panel">${sel?rPanel(sel,conn):rEmpty()}</div></div>`;
-  if(agentM)h+=`<div class="modal-overlay" onclick="agentM=false;render()"><div class="modal" onclick="event.stopPropagation()"><h3 style="color:#e8ecf4;font-size:16px;margin-bottom:4px">📋 Agent Safety Context</h3><p style="color:var(--text3);font-size:12px;margin-bottom:16px">Copy this into Claude Code or any coding agent before it works on your project.</p><textarea id="atxt" readonly>${esc(D.agent_context)}</textarea><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" onclick="agentM=false;render()">Close</button><button class="btn btn-accent" onclick="navigator.clipboard.writeText(document.getElementById('atxt').value).then(()=>alert('Copied!'))">📋 Copy</button></div></div></div>`;
+  // Legend
+  let legendHtml = '<div class="legend">';
+  if(sel && vm==='graph'){
+    legendHtml += `<div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Imports</div><div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Impact</div><span style="color:var(--text3)">|</span> <span style="font-size:11px;color:var(--text3)">${impact.direct.size} direct · ${impact.indirect.size} indirect</span>`;
+  } else {
+    legendHtml += `<div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>Safe</div><div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Careful</div><div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Critical</div>`;
+  }
+  legendHtml += '</div>';
+  
+  canvas.innerHTML = contentHtml + legendHtml;
 
-  // Chat Modal
-  if(chatOpen){
-    h+=`<div class="modal-overlay chat-modal-overlay" onclick="closeChat()">
-      <div class="modal chat-modal" onclick="event.stopPropagation()">
-        <!-- Header -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--spacing-lg);padding-bottom:var(--spacing-md);border-bottom:1px solid var(--border)">
-          <div>
-            <h3 style="color:var(--text);font-size:18px;font-weight:700">💬 Codebase Chat</h3>
-            <p style="color:var(--text3);font-size:12px">Ask questions about your project${projectTabs.length>=2?' (or both projects)':''}</p>
-          </div>
-          <div style="display:flex;align-items:center;gap:var(--spacing-md)">
-            ${projectTabs.length>=2?`
-              <button
-                class="btn ${multiProjectMode?'btn-accent':''}"
-                onclick="toggleMultiProjectMode()"
-                style="font-size:11px;padding:6px 12px"
-              >
-                ${multiProjectMode?'✓ Multi-Project':'Single Project'}
-              </button>
-            `:''}
-            <button class="close-btn" onclick="closeChat()">✕</button>
-          </div>
-        </div>
+  // 5. Update Detail Panel
+  const panel = document.getElementById('detail-panel');
+  if(panel) panel.innerHTML = sel ? rPanel(sel, conn) : rEmpty();
 
-        <!-- Multi-project info banner -->
-        ${multiProjectMode&&projectTabs.length>=2?`
-          <div style="margin-bottom:var(--spacing-lg);padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--accent);border-radius:var(--radius-md)">
-            <div style="display:flex;align-items:center;gap:var(--spacing-sm);margin-bottom:var(--spacing-xs)">
-              <span style="color:var(--accent);font-size:11px;font-weight:600">📁 ACTIVE PROJECTS:</span>
-              ${projectTabs.map(pid=>{
-                const proj=PROJECTS[pid];
-                return`<span style="background:var(--accent);color:#fff;padding:2px 8px;border-radius:var(--radius-sm);font-size:10px">${proj?proj.metadata.project_name:pid}</span>`;
-              }).join('')}
-            </div>
-            <div style="color:var(--text3);font-size:10px">
-              Context: 5 files per project (10 total) · Unified chat history
-            </div>
-          </div>
-        `:''}
+  // 6. Modal Overlays (Agent Context)
+  if(agentM){
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = () => { agentM=false; render(); };
+    modal.innerHTML = `<div class="modal" onclick="event.stopPropagation()"><h3 style="color:#e8ecf4;font-size:16px;margin-bottom:4px">📋 Agent Safety Context</h3><textarea id="atxt" readonly style="width:100%; height:300px; background:var(--bg); color:var(--text); padding:10px; border:1px solid var(--border)">${esc(D.agent_context)}</textarea><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" onclick="agentM=false;render()">Close</button><button class="btn btn-accent" onclick="navigator.clipboard.writeText(document.getElementById('atxt').value).then(()=>alert('Copied!'))">📋 Copy</button></div></div>`;
+    document.body.appendChild(modal);
+  }
 
-        <!-- Model Selector -->
-        <div style="margin-bottom:var(--spacing-lg)">
-          <select id="chatModelSelect" onchange="chatModel=this.value" style="width:100%;padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);color:var(--text)">
-            <option value="deepseek-chat" ${chatModel==='deepseek-chat'?'selected':''}>DeepSeek V3 (Fast Chat - $0.28/M tokens)</option>
-            <option value="deepseek-reasoner" ${chatModel==='deepseek-reasoner'?'selected':''}>DeepSeek R1 (Reasoning - $2.19/M tokens)</option>
-          </select>
-        </div>
+  // Initialize SVG events if in graph mode
+  if(vm==='graph') attachSvgEvents();
+}
 
-        <!-- Prompt Templates -->
-        <div style="margin-bottom:var(--spacing-lg)">
-          <label style="display:block;margin-bottom:var(--spacing-xs);color:var(--text2);font-size:11px;font-weight:600">Quick Prompts:</label>
+function attachSvgEvents(){
+  const svg=document.getElementById('gsvg');
+  if(!svg) return;
+  
+  svg.onmousedown=e=>{
+    drag=true;
+    ds={x:e.clientX-tx.x,y:e.clientY-tx.y};
+    dragStart={x:e.clientX,y:e.clientY};
+    svg.style.cursor='grabbing';
+  };
+
+  window.onmousemove=e=>{
+    if(!drag) return;
+    tx.x=e.clientX-ds.x;
+    tx.y=e.clientY-ds.y;
+    uTx(false);
+  };
+
+  window.onmouseup=()=>{
+    drag=false;
+    if(svg) svg.style.cursor='grab';
+  };
+
+  svg.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const rect=svg.getBoundingClientRect();
+    const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    const oldScale=tx.s;
+    const factor=e.deltaY>0?0.9:1.1;
+    const newScale=Math.max(0.1,Math.min(5,oldScale*factor));
+    tx.x=mx-(mx-tx.x)*(newScale/oldScale);
+    tx.y=my-(my-tx.y)*(newScale/oldScale);
+    tx.s=newScale;
+    uTx(true);
+  },{passive:false});
+}
           <div style="display:flex;gap:var(--spacing-xs);flex-wrap:wrap">
             <button class="template-btn" onclick="insertPromptTemplate('code-review')" style="padding:4px 8px;background:var(--bg4);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text2);font-size:10px;cursor:pointer">🔍 Code Review</button>
             <button class="template-btn" onclick="insertPromptTemplate('refactor')" style="padding:4px 8px;background:var(--bg4);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text2);font-size:10px;cursor:pointer">♻️ Refactor</button>
