@@ -888,10 +888,206 @@ pre{padding:var(--spacing-md);margin:0;white-space:pre-wrap;word-wrap:break-word
   border-color: var(--accent);
   color: var(--accent);
 }
+.chat-input-wrapper {
+  background: rgba(15, 20, 25, 0.5);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-sm);
+  transition: all var(--transition-base);
+}
+.chat-input-wrapper:focus-within {
+  border-color: var(--accent);
+  background: var(--bg4);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.chat-input-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--fs);
+  resize: none;
+  outline: none;
+  min-height: 40px;
+  max-height: 200px;
+  line-height: 1.5;
+  padding: var(--spacing-sm);
+}
+.chat-send-btn {
+  align-self: flex-end;
+  margin-bottom: 4px;
+  margin-right: 4px;
+}
+.context-pill {
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+.context-pill:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.context-pill .remove {
+  cursor: pointer;
+  font-size: 10px;
+  opacity: 0.6;
+}
+.btn-sm {
+  font-size: 10px;
+  padding: 4px 8px;
+  min-height: auto;
+}
+.active-model {
+  background: var(--accent)!important;
+  color: #fff!important;
+  border-color: var(--accent)!important;
+}
+#chatMessages::-webkit-scrollbar {
+  width: 4px;
+}
+#chatMessages::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.template-btn {
+  font-size: 10px;
+  padding: 4px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  color: var(--text3);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.template-btn:hover {
+  background: var(--bg4);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.sidebar-header {
+  height: 60px;
+  flex-shrink: 0;
+}
+.btn-sm {
+  font-size: 10px!important;
+  padding: 4px 8px!important;
+  min-height: 28px!important;
+}
+.chat-input-area {
+  flex-shrink: 0;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
+}
+#prompt-templates::-webkit-scrollbar {
+  display: none;
+}
+.context-pill {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--accent-light);
+  font-weight: 500;
+  cursor: default;
+}
 </style>
 </head>
 <body>
-<div id="app"><div class="loading"><div class="spinner"></div><div style="color:var(--text3);font-size:13px">Scanning codebase...</div></div></div>
+<div id="app">
+  <div class="header">
+    <div class="logo"><span>🗺️</span> <span>Codebase Cartographer</span></div>
+    <div style="display:flex; gap:var(--spacing-md); align-items:center;">
+      <div id="project-tabs-container" class="tabs-container"></div>
+      <button class="btn" onclick="showProjectPicker()">📂 Open</button>
+      <button class="btn btn-accent" onclick="rescan()">🔄 Rescan</button>
+      <button class="btn" onclick="openChat()" id="chat-toggle-btn">💬 AI Chat</button>
+      <button class="btn" onclick="showChatConfig()">⚙️ Settings</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="canvas-container" style="flex:1; position:relative; display:flex; flex-direction:column;">
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="Search files, symbols, concerns..." oninput="debounceSearch(this.value)">
+        <select onchange="langF=this.value;render()">
+          <option value="all">All Languages</option>
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="typescript">TypeScript</option>
+          <option value="swift">Swift</option>
+          <option value="rust">Rust</option>
+          <option value="go">Go</option>
+        </select>
+        <div class="view-tabs">
+          <button class="view-tab" onclick="vm='graph';render()" id="tab-graph">Graph</button>
+          <button class="view-tab" onclick="vm='list';render()" id="tab-list">List</button>
+          <button class="view-tab" onclick="vm='concern';render()" id="tab-concern">Concerns</button>
+          <button class="view-tab" onclick="vm='matrix';render()" id="tab-matrix">Matrix</button>
+        </div>
+      </div>
+        <div id="canvas-area" style="flex:1; position:relative; overflow:hidden;">
+        <div class="canvas" id="canvas"></div>
+      </div>
+    </div>
+
+    <!-- AI Chat Sidebar (Persistent) -->
+    <div id="chat-sidebar" class="panel" style="display:none; width:450px; max-width:450px; border-left:1px solid var(--border); flex-direction:column; background:var(--bg2)">
+      <div class="sidebar-header" style="padding:var(--spacing-lg); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg2)">
+        <div style="display:flex; align-items:center; gap:var(--spacing-sm)">
+          <span style="font-size:18px">🤖</span>
+          <span style="font-weight:700; font-size:15px">DeepSeek AI</span>
+          <div id="model-badge" class="chat-status-badge thinking" style="font-size:9px; padding:2px 6px">V3</div>
+        </div>
+        <div style="display:flex; gap:var(--spacing-sm)">
+          <button class="close-btn" onclick="clearChatHistory()" title="Clear Chat" style="width:32px; height:32px">🗑️</button>
+          <button class="close-btn" onclick="closeChat()" style="width:32px; height:32px">✕</button>
+        </div>
+      </div>
+
+      <!-- Context Manager -->
+      <div id="context-bar" style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg3); border-bottom:1px solid var(--border); font-size:11px; display:flex; align-items:center; gap:var(--spacing-md); overflow-x:auto">
+        <span style="color:var(--text3); white-space:nowrap">Context:</span>
+        <div id="context-pills" style="display:flex; gap:4px">
+          <span style="color:var(--text3); font-style:italic">No files attached</span>
+        </div>
+      </div>
+
+      <!-- Model Selector -->
+      <div style="padding:var(--spacing-sm) var(--spacing-lg); background:var(--bg2); border-bottom:1px solid var(--border); display:flex; gap:var(--spacing-sm)">
+        <button class="btn btn-sm" id="model-chat-btn" onclick="setChatModel('deepseek-chat')" style="flex:1; font-size:11px; padding:4px">DeepSeek V3 (Fast)</button>
+        <button class="btn btn-sm" id="model-reasoner-btn" onclick="setChatModel('deepseek-reasoner')" style="flex:1; font-size:11px; padding:4px">DeepSeek R1 (Reasoning)</button>
+      </div>
+
+      <div id="chatMessages" style="flex:1; overflow-y:auto; padding:var(--spacing-lg); display:flex; flex-direction:column; gap:var(--spacing-lg); scroll-behavior:smooth">
+        <!-- Messages here -->
+      </div>
+
+      <div class="chat-input-area" style="padding:var(--spacing-lg); background:var(--bg2); border-top:1px solid var(--border)">
+        <div id="prompt-templates" style="display:flex; gap:var(--spacing-xs); overflow-x:auto; margin-bottom:var(--spacing-md); padding-bottom:4px; scrollbar-width:none">
+          <!-- Template buttons here -->
+        </div>
+        <div class="chat-input-wrapper">
+          <textarea id="chatInput" class="chat-input-textarea" placeholder="Ask about the codebase... (Cmd+Enter to send)" onkeydown="if(event.metaKey && event.key==='Enter') sendChatMessage()"></textarea>
+          <button class="chat-send-btn" onclick="sendChatMessage()">↑</button>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:var(--spacing-sm)">
+           <button class="btn" style="font-size:10px; padding:2px 8px" onclick="toggleMultiProjectMode()" id="multi-project-toggle">📁 Multi-Project: OFF</button>
+           <button class="btn" style="font-size:10px; padding:2px 8px" onclick="exportChatToMarkdown()">📥 Export Proposal</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="detail-panel">
+      <!-- File details here -->
+    </div>
+  </div>
+</div>
 <script>
 let D=null,sel=null,sel2=null,hov=null,vm='graph',search='',langF='all',conF='',riskT=0,sf='risk_score',sd=-1,pos={},tx={x:0,y:0,s:1},drag=false,ds={x:0,y:0},dragStart={x:0,y:0},agentM=false,svgEventsAttached=false,searchTimeout=null,codeViewerOpen=false,pathFinderMode=false,compareMode=false,rafPending=false,layoutMode='hybrid';
 // Chat state
@@ -1081,6 +1277,18 @@ async function load(){
 
   // Always show project picker on first load
   showProjectPicker();
+
+  // Fetch AI config
+  try {
+    const configResp = await fetch('/api/config');
+    const configData = await configResp.json();
+    if(configData.selected_model) {
+      chatModel = configData.selected_model;
+      updateModelUI();
+    }
+  } catch(e) {
+    console.error('Failed to load config:', e);
+  }
 }
 
 async function rescan(){
@@ -1240,6 +1448,9 @@ async function viewCode(node){
 // Chat Functions
 async function openChat(){
   chatOpen=true;
+  const sidebar = document.getElementById('chat-sidebar');
+  sidebar.style.display = 'flex';
+  document.getElementById('chat-toggle-btn').classList.add('btn-accent');
 
   // Load existing chat history based on mode
   try{
@@ -1252,13 +1463,74 @@ async function openChat(){
     console.error('Failed to load chat history:',e);
   }
 
+  updateModelUI();
+  renderPromptTemplates();
+  renderContextPills();
   render();
   setTimeout(()=>renderChatMessages(),100);
 }
 
 function closeChat(){
   chatOpen=false;
+  const sidebar = document.getElementById('chat-sidebar');
+  sidebar.style.display = 'none';
+  document.getElementById('chat-toggle-btn').classList.remove('btn-accent');
   render();
+}
+
+function setChatModel(model){
+  chatModel = model;
+  updateModelUI();
+  // Save to backend
+  fetch('/api/chat/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({api_key: 'KEEP_EXISTING', model: chatModel})
+  });
+}
+
+function updateModelUI(){
+  const chatBtn = document.getElementById('model-chat-btn');
+  const reasonerBtn = document.getElementById('model-reasoner-btn');
+  const badge = document.getElementById('model-badge');
+
+  if(chatModel === 'deepseek-chat'){
+    chatBtn.classList.add('active-model');
+    reasonerBtn.classList.remove('active-model');
+    badge.textContent = 'V3 (Fast)';
+    badge.className = 'chat-status-badge generating';
+  } else {
+    chatBtn.classList.remove('active-model');
+    reasonerBtn.classList.add('active-model');
+    badge.textContent = 'R1 (Reasoner)';
+    badge.className = 'chat-status-badge thinking';
+  }
+}
+
+function renderPromptTemplates(){
+  const container = document.getElementById('prompt-templates');
+  if(!container) return;
+
+  container.innerHTML = Object.entries(PROMPT_TEMPLATES).map(([key, data]) => `
+    <button class="template-btn" onclick="insertPromptTemplate('${key}')">${data.label}</button>
+  `).join('');
+}
+
+function renderContextPills(){
+  const container = document.getElementById('context-pills');
+  if(!container) return;
+
+  if(!sel){
+    container.innerHTML = '<span style="color:var(--text3); font-style:italic">No files attached</span>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="context-pill">
+      <span>📄 ${sel.name}</span>
+      <span class="remove" onclick="sel=null;renderContextPills();render()">✕</span>
+    </div>
+  `;
 }
 
 async function toggleMultiProjectMode(){
@@ -1270,6 +1542,7 @@ async function toggleMultiProjectMode(){
 
   // Toggle mode
   multiProjectMode=!multiProjectMode;
+  document.getElementById('multi-project-toggle').textContent = multiProjectMode ? '🌐 Multi-Project: ON' : '📁 Multi-Project: OFF';
 
   // Load appropriate history
   if(multiProjectMode){
@@ -1279,8 +1552,7 @@ async function toggleMultiProjectMode(){
   }
 
   // Re-render
-  render();
-  setTimeout(()=>renderChatMessages(),100);
+  renderChatMessages();
 }
 
 async function loadMultiProjectChatHistory(){
@@ -1917,60 +2189,95 @@ function smartSearch(query){
 function showProjectPicker(){
   fetch('/api/recent-projects').then(r=>r.json()).then(data=>{
     const projects=data.projects||[];
-    let h='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);padding:var(--spacing-2xl)"><div style="max-width:640px;width:100%;padding:var(--spacing-4xl);background:var(--bg2);border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);border:1px solid var(--border);animation:fadeIn 0.3s ease-out"><div style="text-align:center;margin-bottom:var(--spacing-4xl)"><div style="font-size:64px;margin-bottom:var(--spacing-2xl);line-height:1;filter:drop-shadow(0 4px 12px rgba(59,130,246,0.3))">🗺️</div><h1 style="color:var(--text);font-size:36px;font-weight:700;margin-bottom:var(--spacing-md);letter-spacing:-0.02em">Codebase Cartographer</h1><p style="color:var(--text2);font-size:16px;line-height:1.6">Select a project to analyze and visualize dependencies</p></div>';
+    let h=`
+    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);padding:var(--spacing-xl);overflow-y:auto">
+      <div style="max-width:800px;width:100%;margin:auto;animation:fadeIn 0.4s ease-out">
+        
+        <!-- Hero Section -->
+        <div style="text-align:center;margin-bottom:var(--spacing-4xl)">
+          <div style="font-size:72px;margin-bottom:var(--spacing-lg);line-height:1;filter:drop-shadow(0 0 20px rgba(59,130,246,0.2))">🗺️</div>
+          <h1 style="color:var(--text);font-size:42px;font-weight:800;margin-bottom:var(--spacing-sm);letter-spacing:-0.03em;background:linear-gradient(to bottom, #fff, var(--text2));-webkit-background-clip:text;-webkit-text-fill-color:transparent">Codebase Cartographer</h1>
+          <p style="color:var(--text3);font-size:18px;max-width:500px;margin:0 auto">Map your architecture, visualize dependencies, and chat with your code.</p>
+        </div>
 
-    // Show currently loaded projects first
-    if(projectTabs.length > 0){
-      // Count only user projects (exclude Cartographer's own directory)
-      const userProjectCount = projectTabs.filter(id => {
-        const proj = PROJECTS[id];
-        const projPath = proj?.metadata?.project_root || '';
-        return !projPath.includes('/cartocode') || !projPath.endsWith('cartocode');
-      }).length;
-      h+='<div style="margin-bottom:var(--spacing-3xl)"><div style="color:var(--green);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:var(--spacing-lg);font-family:var(--fm);font-weight:600">✓ Currently Loaded ('+userProjectCount+'/2)</div>';
-      projectTabs.forEach((projectId,i)=>{
-        const proj = PROJECTS[projectId];
-        const projName = proj?.metadata?.project_name || 'Unknown';
-        const projRoot = proj?.metadata?.project_root || '';
-        const health = proj?.metadata?.health_score || 0;
-        h+='<div class="project-item loaded-project" data-project-id="'+esc(projectId)+'" style="padding:var(--spacing-lg);background:rgba(16,185,129,0.1);border:2px solid var(--green);border-radius:var(--radius-md);margin-bottom:var(--spacing-md);cursor:pointer;transition:all var(--transition-base);font-family:var(--fm);font-size:14px;color:var(--text);box-shadow:var(--shadow-md);animation:slideInUp 0.3s ease-out;animation-delay:'+(i*50)+'ms;animation-fill-mode:both"><div style="display:flex;justify-content:space-between;align-items:center;gap:var(--spacing-md)"><div style="flex:1"><div style="font-weight:600;margin-bottom:4px;color:var(--text)">'+esc(projName)+'</div><div style="font-size:11px;color:var(--text3);font-family:var(--fm);word-break:break-all">'+esc(projRoot)+'</div></div><div style="text-align:right;flex-shrink:0"><div style="font-size:11px;color:var(--green);font-weight:600;margin-bottom:2px">Health: '+health+'/100</div><div style="font-size:10px;color:var(--text3)">Click to continue →</div></div></div></div>';
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--spacing-2xl);align-items:start">
+          
+          <!-- Left: New Project -->
+          <div style="background:var(--bg2);padding:var(--spacing-2xl);border-radius:var(--radius-xl);border:1px solid var(--border);box-shadow:var(--shadow-lg)">
+            <h2 style="color:var(--text);font-size:18px;font-weight:700;margin-bottom:var(--spacing-xl);display:flex;align-items:center;gap:8px">
+              <span style="color:var(--accent)">+</span> Load New Project
+            </h2>
+            <div style="margin-bottom:var(--spacing-lg)">
+              <label style="display:block;color:var(--text3);font-size:11px;text-transform:uppercase;margin-bottom:var(--spacing-sm);font-weight:600">Local Directory Path</label>
+              <input id="customPath" type="text" placeholder="/Users/name/projects/app" 
+                style="width:100%;padding:var(--spacing-lg);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);color:var(--text);font-size:14px;font-family:var(--fm);outline:none;transition:all var(--transition-base)">
+            </div>
+            <button id="loadBtn" class="btn btn-accent" style="width:100%;padding:var(--spacing-lg);font-weight:700;font-size:14px">START CARTOGRAPHY</button>
+            <p style="margin-top:var(--spacing-lg);color:var(--text3);font-size:12px;text-align:center">Or drop a folder into this window</p>
+          </div>
+
+          <!-- Right: Recent Projects -->
+          <div style="background:var(--bg2);padding:var(--spacing-2xl);border-radius:var(--radius-xl);border:1px solid var(--border);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;max-height:450px">
+            <h2 style="color:var(--text);font-size:18px;font-weight:700;margin-bottom:var(--spacing-xl);display:flex;justify-content:space-between;align-items:center">
+              <span>🕒 Recents</span>
+              <span style="font-size:11px;color:var(--text3);font-weight:400">${projects.length} saved</span>
+            </h2>
+            
+            <div style="flex:1;overflow-y:auto;padding-right:4px;margin-right:-4px" id="recentsList">
+    `;
+
+    if(projects.length === 0) {
+      h += \`<div style="text-align:center;padding:var(--spacing-4xl);color:var(--text3);font-style:italic">No recent projects yet</div>\`;
+    } else {
+      projects.forEach((p, i) => {
+        const name = p.split('/').pop();
+        h += \`
+        <div class="project-item" data-path="\${esc(p)}" style="padding:var(--spacing-md);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:var(--spacing-sm);cursor:pointer;transition:all var(--transition-base);display:flex;align-items:center;gap:var(--spacing-md);animation:slideInUp 0.3s ease-out;animation-delay:\${i*40}ms;animation-fill-mode:both">
+          <div style="width:32px;height:32px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px">📂</div>
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--text);font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">\${esc(name)}</div>
+            <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--fm)">\${esc(p)}</div>
+          </div>
+        </div>\`;
       });
-      h+='</div>';
     }
 
-    if(projects.length>0){
-      h+='<div style="margin-bottom:var(--spacing-3xl)"><div style="color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:var(--spacing-lg);font-family:var(--fm);font-weight:600">Recent Projects</div>';
-      projects.forEach((p,i)=>{
-        h+='<div class="project-item" data-path="'+esc(p)+'" style="padding:var(--spacing-lg);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:var(--spacing-md);cursor:pointer;transition:all var(--transition-base);font-family:var(--fm);font-size:14px;color:var(--text);box-shadow:var(--shadow-sm);animation:slideInUp 0.3s ease-out;animation-delay:'+(i*50)+'ms;animation-fill-mode:both">'+esc(p)+'</div>';
-      });
-      h+='</div>';
-    }
-    h+='<div style="margin-bottom:var(--spacing-lg)"><div style="color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:var(--spacing-lg);font-family:var(--fm);font-weight:600">Or Enter Path</div><input id="customPath" type="text" placeholder="/path/to/your/project" style="width:100%;padding:var(--spacing-lg);background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-md);color:var(--text);font-size:15px;font-family:var(--fm);outline:none;transition:all var(--transition-base);box-shadow:var(--shadow-sm)"></div><button id="loadBtn" style="width:100%;padding:var(--spacing-lg);background:var(--accent);border:none;border-radius:var(--radius-md);color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:all var(--transition-base);box-shadow:var(--shadow-md);text-transform:uppercase;letter-spacing:0.05em">Load Project</button></div></div>';
-    h+='<style>@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}@keyframes slideInUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.project-item:hover{background:var(--bg4);border-color:var(--accent);transform:translateY(-2px);box-shadow:var(--shadow-md)}#customPath:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,0.1)}#loadBtn:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:var(--shadow-lg)}#loadBtn:active{transform:translateY(0);box-shadow:var(--shadow-md)}</style>';
-    document.getElementById('app').innerHTML=h;
+    h += `
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <style>
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes slideInUp { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+      #recentsList::-webkit-scrollbar { width: 4px; }
+      #recentsList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+      .project-item:hover { border-color: var(--accent); background: var(--bg4)!important; transform: translateX(4px); }
+    </style>`;
 
-    // Handle clicks on loaded projects (continue to dashboard)
-    document.querySelectorAll('.loaded-project').forEach(el=>{
-      el.onclick=()=>{
-        const projectId = el.getAttribute('data-project-id');
-        if(projectId && PROJECTS[projectId]){
-          switchProject(projectId);  // Use switchProject for consistency
-        }
-      };
+    document.getElementById('app').innerHTML = h;
+
+    // Re-attach event listeners
+    document.querySelectorAll('.project-item').forEach(el => {
+      el.onclick = () => loadProject(el.getAttribute('data-path'));
     });
-
-    // Handle clicks on recent projects (load new)
-    document.querySelectorAll('.project-item:not(.loaded-project)').forEach(el=>{
-      el.onclick=()=>loadProject(el.getAttribute('data-path'));
-    });
-
-    const inp=document.getElementById('customPath');
-    const btn=document.getElementById('loadBtn');
-    if(inp){
-      setTimeout(()=>inp.focus(),100);
-      inp.onkeypress=e=>{if(e.key==='Enter')btn.click()};
+    
+    const inp = document.getElementById('customPath');
+    const btn = document.getElementById('loadBtn');
+    if(inp) {
+      inp.focus();
+      inp.onkeypress = e => { if(e.key==='Enter') btn.click() };
     }
-    if(btn)btn.onclick=()=>loadProject(inp.value);
+    if(btn) btn.onclick = () => loadProject(inp.value);
+
+    // Support Drag & Drop
+    window.ondragover = e => e.preventDefault();
+    window.ondrop = e => {
+      e.preventDefault();
+      const path = e.dataTransfer.files[0]?.path;
+      if(path) loadProject(path);
+    };
   });
 }
 function getF(){return D.nodes.filter(n=>{if(n.risk_score<riskT)return false;if(langF!=='all'&&n.language!==langF)return false;if(conF&&!(n.concerns||[]).includes(conF))return false;if(search){const q=search.toLowerCase();if(!n.path.toLowerCase().includes(q)&&!n.name.toLowerCase().includes(q)&&!(n.tags||[]).join(' ').toLowerCase().includes(q))return false}return true})}
@@ -2022,6 +2329,7 @@ function getImpactZone(n){
 }
 
 function render(){
+  renderContextPills();
   // Ensure D is synced with current project
   if(currentProjectId && PROJECTS[currentProjectId]){
     D = PROJECTS[currentProjectId];

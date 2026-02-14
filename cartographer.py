@@ -201,7 +201,7 @@ class Scanner:
         crit = [{'file':n['relative_path'],'risk_score':n['risk_score'],'fan_in':n['fan_in'],'tags':n['tags'],'binding_points':len(n['binding_points'])} for n in sn[:20] if n['risk_score']>15]
         ac = self._agent_ctx(crit, nl)
         out_nodes = [{'id':n['id'],'path':n['relative_path'],'name':n['name'],'language':n['language'],'lines':n['line_count'],'size':n['size_bytes'],'imports':n['imports'],'exports':n['exports'],'binding_points':n['binding_points'],'tags':n['tags'],'risk_score':n['risk_score'],'fan_in':n['fan_in'],'fan_out':n['fan_out'],'complexity':n['complexity_hint'],'git_changes':n['git_changes'],'has_tests':n['has_tests'],'concerns':n.get('concerns',[]),'plain_english':n['plain_english']} for n in nl]
-        return {'metadata':{'project_root':str(self.root),'project_name':self.root.name,'scanned_at':datetime.now().isoformat(),'total_files':len(out_nodes),'total_edges':len(el),'total_binding_points':len(self.bps),'languages':list(set(n['language'] for n in nl)),'health_score':health},'nodes':out_nodes,'edges':el,'groups':dict(groups),'concern_clusters':dict(cc),'critical_files':crit,'agent_context':ac}
+        return {'metadata':{'project_root':str(self.root),'project_name':self.root.name,'scanned_at':datetime.now().isoformat(),'total_files':len(out_nodes),'total_edges':len(el),'total_binding_points':len(self.bps),'languages':list(set(n['language'] for n in nl)),'health_score':health},'nodes':out_nodes,'edges':el,'groups':dict(groups),'concern_clusters':dict(cc),'critical_files':crit,'agent_context':ac,'contents':self.contents}
 
     def _agent_ctx(self, crit, nl):
         lines = ["# ⚠️ CODEBASE RISK MAP — READ BEFORE MODIFYING","","## 🔴 Critical Files (DO NOT modify without review)",""]
@@ -250,19 +250,39 @@ OPTIMAL_TEMPS = {
 
 SELECTED_MODEL = MODEL_DEEPSEEK_CODER  # Optimized for code analysis
 
+# Token counting helper
+try:
+    import tiktoken
+    ENCODING = tiktoken.get_encoding("cl100k_base")
+except ImportError:
+    ENCODING = None
+
 def estimate_tokens(text):
-    """Estimate token count (rough approximation: 1 token ≈ 4 chars)"""
-    return len(text) // 4
+    """Estimate token count using tiktoken or fallback approximation"""
+    if ENCODING:
+        try:
+            return len(ENCODING.encode(text, disallowed_special=()))
+        except:
+            pass
+    return len(text) // 3
 
 def _truncate_to_tokens(text, max_tokens):
     """Truncate text to approximate token limit"""
-    estimated_tokens = estimate_tokens(text)
+    if ENCODING:
+        try:
+            tokens = ENCODING.encode(text, disallowed_special=())
+            if len(tokens) <= max_tokens:
+                return text
+            return ENCODING.decode(tokens[:max_tokens])
+        except:
+            pass
 
+    # Fallback to character-based truncation
+    estimated_tokens = estimate_tokens(text)
     if estimated_tokens <= max_tokens:
         return text
 
-    # Truncate proportionally
-    target_chars = max_tokens * 4
+    target_chars = max_tokens * 3
     return text[:target_chars]
 
 def generate_project_id(path):
@@ -276,10 +296,15 @@ def get_recent_projects():
     return []
 
 def add_recent_project(path):
-    recent = get_recent_projects()
     path = str(Path(path).resolve())
+    if not os.path.isdir(path):
+        return
+        
+    recent = get_recent_projects()
     if path in recent:
         recent.remove(path)
+    
+    # Insert at top and limit to 10
     recent.insert(0, path)
     RECENT_PROJECTS_FILE.write_text('\n'.join(recent[:10]))
 
@@ -452,12 +477,25 @@ def _build_single_project_context(query, project_id=None, include_files=[], max_
     if not SCAN_DATA or not SCAN_DATA.get('nodes'):
         return ""
 
+    contents = SCAN_DATA.get('contents', {})
+
     # ═══════════════════════════════════════════════════
     # TOP SECTION - Most Critical (High Attention)
     # ═══════════════════════════════════════════════════
 
     meta = SCAN_DATA.get('metadata', {})
     project_name = meta.get('project_name', 'Unknown')
+
+    # Generate a simple file tree for context
+    file_tree = []
+    for node in SCAN_DATA.get('nodes', []):
+        file_tree.append(node['path'])
+    
+    # Sort and format as a list
+    file_tree.sort()
+    tree_str = "\n".join([f"- {p}" for p in file_tree[:100]]) # Limit to first 100 files for tree
+    if len(file_tree) > 100:
+        tree_str += f"\n... and {len(file_tree) - 100} more files."
 
     top_section = f"""QUERY: {query}
 
@@ -466,6 +504,9 @@ PROJECT OVERVIEW:
 - Health: {meta.get('health_score', 0)}/100
 - Languages: {', '.join(meta.get('languages', []))}
 - Total Files: {meta.get('total_files', 0)}
+
+PROJECT STRUCTURE:
+{tree_str}
 """
 
     # Add explicitly requested files to TOP (highest priority)
@@ -479,11 +520,12 @@ PROJECT OVERVIEW:
             top_files.append(file_id)
 
     if top_files:
-        top_section += "\nEXPLICITLY REQUESTED FILES:\n"
-        for file_id in top_files[:3]:  # Limit to 3 in top section
+        top_section += "\nEXPLICITLY REQUESTED FILES (FULL CONTENT):\n"
+        for file_id in top_files:
             node = next((n for n in SCAN_DATA.get('nodes', []) if n['id'] == file_id), None)
             if node:
-                top_section += f"- {node['path']}\n"
+                file_content = contents.get(node['id'], 'Content not available')
+                top_section += f"\nFILE: {node['path']}\n```\n{file_content}\n```\n"
 
     # ═══════════════════════════════════════════════════
     # MIDDLE SECTION - Supporting Context
@@ -503,9 +545,11 @@ ARCHITECTURE & RISK MAP:
     )
 
     if relevant_files:
-        middle_section += "\nRELEVANT FILES (ranked by query relevance):\n"
+        middle_section += "\nRELEVANT FILES (WITH CONTENT):\n"
         for node in relevant_files:
             tags_str = ', '.join(node.get('tags', []))
+            file_content = contents.get(node['id'], '')
+            
             middle_section += f"""
 FILE: {node['path']}
 - Risk: {node['risk_score']}/100
@@ -513,6 +557,9 @@ FILE: {node['path']}
 - Concerns: {', '.join(node.get('concerns', []))}
 - Explanation: {node.get('plain_english', '')[:200]}...
 """
+            if file_content:
+                # Include content for relevant files too, wrapped in markdown
+                middle_section += f"```\n{file_content}\n```\n"
 
     # ═══════════════════════════════════════════════════
     # BOTTOM SECTION - Focus & Instructions (High Attention)
@@ -538,7 +585,7 @@ def build_codebase_context(query, project_id=None, include_files=[]):
     if not context:
         return "No codebase loaded."
     # Use token-based limit instead of char-based
-    return _truncate_to_tokens(context, max_tokens=120000)  # Leave room for response
+    return _truncate_to_tokens(context, max_tokens=100000)  # Leave room for response
 
 
 def build_multi_project_context(query, project_ids, include_files=[]):
@@ -792,13 +839,22 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/scan':
             project_id = self.get_project_id_from_query()
             if project_id and project_id in PROJECTS:
-                self._json(PROJECTS[project_id]['scan_data'])
+                data = PROJECTS[project_id]['scan_data'].copy()
+                if 'contents' in data:
+                    del data['contents']
+                self._json(data)
             else:
                 self._json({'metadata':{},'nodes':[],'edges':[]})
         elif p == '/api/rescan':
             project_id = self.get_project_id_from_query()
             result = do_rescan(project_id)
-            self._json(result if result else {'metadata':{},'nodes':[],'edges':[]})
+            if result:
+                data = result.copy()
+                if 'contents' in data:
+                    del data['contents']
+                self._json(data)
+            else:
+                self._json({'metadata':{},'nodes':[],'edges':[]})
         elif p == '/api/agent-context':
             project_id = self.get_project_id_from_query()
             if project_id and project_id in PROJECTS:
@@ -834,6 +890,11 @@ class Handler(BaseHTTPRequestHandler):
         elif p == '/api/chat/multi-history':
             global MULTI_PROJECT_CHAT_HISTORY
             self._json({'messages': MULTI_PROJECT_CHAT_HISTORY})
+        elif p == '/api/config':
+            self._json({
+                'api_key_set': bool(DEEPSEEK_API_KEY),
+                'selected_model': SELECTED_MODEL
+            })
         elif p in ('/','/index.html'): self._html()
         else: self.send_error(404)
 
@@ -1024,11 +1085,12 @@ class Handler(BaseHTTPRequestHandler):
             api_key = data.get('api_key', '').strip()
             model = data.get('model', '')
 
-            if not api_key:
+            if api_key and api_key != 'KEEP_EXISTING':
+                DEEPSEEK_API_KEY = api_key
+            
+            if not DEEPSEEK_API_KEY and not api_key:
                 self.send_error(400, 'API key cannot be empty')
                 return
-
-            DEEPSEEK_API_KEY = api_key
 
             if model:
                 SELECTED_MODEL = model
