@@ -2348,6 +2348,52 @@ function getImpactZone(n){
   return {direct,indirect};
 }
 
+function uTx(animate=true){
+  if(rafPending)return;
+  rafPending=true;
+  requestAnimationFrame(()=>{
+    const g=document.getElementById('gg');
+    if(g){
+      if(!animate) g.style.transition='none';
+      g.setAttribute('transform',`translate(${tx.x},${tx.y}) scale(${tx.s})`);
+      if(!animate) setTimeout(()=>g.style.transition='',0);
+    }
+    const ind=document.querySelector('.zoom-indicator');
+    if(ind)ind.textContent=`${Math.round(tx.s*100)}%`;
+    rafPending=false;
+  });
+}
+function zoomIn(){
+  const canvas=document.getElementById('canvas');
+  const cw=canvas.clientWidth, ch=canvas.clientHeight;
+  const oldS=tx.s; tx.s=Math.min(5,tx.s*1.2);
+  tx.x=cw/2-(cw/2-tx.x)*(tx.s/oldS);
+  tx.y=ch/2-(ch/2-tx.y)*(tx.s/oldS);
+  uTx(true);
+}
+function zoomOut(){
+  const canvas=document.getElementById('canvas');
+  const cw=canvas.clientWidth, ch=canvas.clientHeight;
+  const oldS=tx.s; tx.s=Math.max(0.1,tx.s/1.2);
+  tx.x=cw/2-(cw/2-tx.x)*(tx.s/oldS);
+  tx.y=ch/2-(ch/2-tx.y)*(tx.s/oldS);
+  uTx(true);
+}
+function resetZoom(){ fitToScreen(); }
+function fitToScreen(){
+  const nodes=getF(); if(!nodes.length)return;
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  nodes.forEach(n=>{const p=pos[n.id];if(p){minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y)}});
+  const w=maxX-minX, h=maxY-minY, cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  const canvas=document.getElementById('canvas');
+  const cw=canvas.clientWidth, ch=canvas.clientHeight;
+  const padding=200;
+  const scale=Math.min(cw/(w+padding), ch/(h+padding));
+  tx.s=Math.max(0.1,Math.min(scale,1));
+  tx.x=cw/2-cx*tx.s; tx.y=ch/2-cy*tx.s;
+  uTx(true);
+}
+
 function render(){
   renderContextPills();
   
@@ -2444,7 +2490,7 @@ function render(){
         const p=pos[n.id]; if(!p) return '';
         const isS=sel&&sel.id===n.id, isC=conn.has(n.id);
         const r=nr(n);
-        return `<g class="node" transform="translate(${p.x},${p.y})" onclick="event.stopPropagation();sel=sel&&sel.id==='${n.id}'?null:D.nodes.find(x=>x.id==='${n.id}');render()" onmouseenter="hov='${n.id}';render()" onmouseleave="hov=null;render()" style="cursor:pointer">
+        return `<g class="node" transform="translate(${p.x},${p.y})" onclick="event.stopPropagation();selN('${n.id}')" onmouseenter="hov='${n.id}';render()" onmouseleave="hov=null;render()" style="cursor:pointer">
           <circle r="${r}" fill="${rc(n.risk_score)}" stroke="${isS?'#fff':(hov===n.id?'#fff':'none')}" stroke-width="${isS?3:2}" opacity="${!sel||isC?1:0.15}" />
           <text dy=".3em" text-anchor="middle" fill="${isS?'#fff':'var(--text)'}" style="font-size:${Math.max(10,r/2)}px;font-weight:700;pointer-events:none;opacity:${!sel||isC?1:0.15}">${esc(n.name)}</text>
         </g>`;
@@ -2491,7 +2537,7 @@ function render(){
   }
 
   // Initialize SVG events if in graph mode
-  if(vm==='graph') attachSvgEvents();
+  if(vm==='graph') setTimeout(attachSvgEvents, 50);
 }
 
 function attachSvgEvents(){
