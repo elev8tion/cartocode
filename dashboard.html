@@ -2312,8 +2312,6 @@ function showProjectPicker(){
     };
   });
 }
-  });
-}
 function getF(){return D.nodes.filter(n=>{if(n.risk_score<riskT)return false;if(langF!=='all'&&n.language!==langF)return false;if(conF&&!(n.concerns||[]).includes(conF))return false;if(search){const q=search.toLowerCase();if(!n.path.toLowerCase().includes(q)&&!n.name.toLowerCase().includes(q)&&!(n.tags||[]).join(' ').toLowerCase().includes(q))return false}return true})}
 function getConn(n){if(!n)return new Set();const s=new Set([n.id]);D.edges.forEach(e=>{if(e.source===n.id)s.add(e.target);if(e.target===n.id)s.add(e.source)});return s}
 function getHL(n){if(!n)return new Set();return new Set(D.edges.filter(e=>e.source===n.id||e.target===n.id).map(e=>`${e.source}-${e.target}`))}
