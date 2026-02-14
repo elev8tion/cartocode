@@ -1198,10 +1198,24 @@ def main():
     print(f"\n  🌐 Dashboard: http://localhost:{port}")
     print(f"  Press Ctrl+C to stop\n")
 
-    server = HTTPServer(('', port), Handler)
-    # Browser opening handled by launcher script - removed to prevent duplicate tabs
-    # threading.Timer(1.0, lambda: webbrowser.open(f'http://localhost:{port}')).start()
-    try: server.serve_forever()
-    except KeyboardInterrupt: print("\n  Stopped."); server.server_close()
+    class CustomHTTPServer(HTTPServer):
+        allow_reuse_address = True
+
+    server = CustomHTTPServer(('', port), Handler)
+
+    def shutdown_handler(sig, frame):
+        print("\n  Shutting down server and releasing port...")
+        server.server_close()
+        sys.exit(0)
+
+    import signal
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
+    try: 
+        server.serve_forever()
+    except Exception as e: 
+        print(f"\n  Server error: {e}")
+        server.server_close()
 
 if __name__ == '__main__': main()
