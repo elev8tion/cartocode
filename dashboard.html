@@ -1106,6 +1106,12 @@ pre{padding:var(--spacing-md);margin:0;white-space:pre-wrap;word-wrap:break-word
   <div id="project-picker-overlay" style="display:flex;">
     <div class="loading"><div class="spinner"></div><div style="color:var(--text3);font-size:13px">Initializing...</div></div>
   </div>
+
+  <!-- Universal Loading Overlay -->
+  <div id="loading-overlay" style="display:none; position:fixed; inset:0; background:rgba(10,14,23,0.8); backdrop-filter:blur(4px); z-index:2000; align-items:center; justify-content:center; flex-direction:column; gap:var(--spacing-lg);">
+    <div class="spinner"></div>
+    <div id="loading-text" style="color:var(--text); font-weight:500; font-size:14px;">Processing...</div>
+  </div>
 </div>
 <script>
 let D=null,sel=null,sel2=null,hov=null,vm='graph',search='',langF='all',conF='',riskT=0,sf='risk_score',sd=-1,pos={},tx={x:0,y:0,s:1},drag=false,ds={x:0,y:0},dragStart={x:0,y:0},agentM=false,svgEventsAttached=false,searchTimeout=null,codeViewerOpen=false,pathFinderMode=false,compareMode=false,rafPending=false,layoutMode='hybrid';
@@ -1316,7 +1322,10 @@ async function rescan(){
     return;
   }
 
-  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><div style="color:var(--text3);font-size:13px">Re-scanning...</div></div>';
+  const loader = document.getElementById('loading-overlay');
+  const loaderText = document.getElementById('loading-text');
+  loader.style.display = 'flex';
+  loaderText.textContent = 'Re-scanning codebase...';
 
   try {
     const r = await fetch(`/api/rescan?project_id=${currentProjectId}`);
@@ -1327,8 +1336,10 @@ async function rescan(){
 
     applyLayout();
     sel = null;
+    loader.style.display = 'none';
     render();
   } catch(e) {
+    loader.style.display = 'none';
     alert('Rescan failed: ' + e.message);
     render();
   }
@@ -1383,7 +1394,10 @@ async function loadProjectIntoTab(path){
     return;
   }
 
-  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><div style="color:var(--text3);font-size:13px">Loading project...</div></div>';
+  const loader = document.getElementById('loading-overlay');
+  const loaderText = document.getElementById('loading-text');
+  loader.style.display = 'flex';
+  loaderText.textContent = 'Loading and analyzing project...';
 
   try {
     const r = await fetch('/api/load-project', {
@@ -1401,8 +1415,10 @@ async function loadProjectIntoTab(path){
     PROJECTS[projectId] = projectData;
     projectTabs.push(projectId);
 
+    loader.style.display = 'none';
     switchProject(projectId);
   } catch(e) {
+    loader.style.display = 'none';
     alert('Error loading project: ' + e.message);
     render();
   }
