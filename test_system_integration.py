@@ -192,62 +192,6 @@ def test_ui_registry_operations():
 # TEST SUITE 2: OPTIMIZED API CLIENT
 # ═══════════════════════════════════════════════════════════
 
-def test_optimized_api_client():
-    """Test OptimizedAPIClient"""
-    log_test("OptimizedAPIClient")
-
-    try:
-        # Try to import with modified sys.path
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "cartographer_mcp",
-            os.path.join(os.path.dirname(__file__), "cartographer_mcp.py")
-        )
-        if not spec or not spec.loader:
-            log_info("MCP library not available - skipping MCP client tests")
-            return
-
-        # Load module
-        try:
-            cart_mcp = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(cart_mcp)
-        except Exception as e:
-            if "No module named 'mcp'" in str(e):
-                log_info("MCP library not installed - this is optional for testing")
-                # Test the class definition exists at least
-                with open("cartographer_mcp.py", 'r') as f:
-                    content = f.read()
-                    if "class OptimizedAPIClient" in content:
-                        log_pass("OptimizedAPIClient class defined in code")
-                    else:
-                        log_fail("OptimizedAPIClient class not found")
-                return
-            raise
-
-        # Test: Client initialization
-        client = cart_mcp.OptimizedAPIClient(TestConfig.CARTOGRAPHER_URL)
-        if client:
-            log_pass("OptimizedAPIClient initialized")
-        else:
-            log_fail("OptimizedAPIClient initialization failed")
-            return
-
-        # Test: Cache initialization
-        if hasattr(client, '_cache'):
-            log_pass("Cache initialized")
-        else:
-            log_fail("Cache not initialized")
-
-        # Test: Cache TTL set
-        if hasattr(client, '_cache_ttl'):
-            log_pass("Cache TTL configured")
-        else:
-            log_fail("Cache TTL not configured")
-
-    except ImportError as e:
-        log_info(f"Import issue (non-critical): {e}")
-    except Exception as e:
-        log_fail("OptimizedAPIClient test failed", str(e))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -461,150 +405,10 @@ def test_chat_endpoints():
 # TEST SUITE 4: INTEGRATION TESTS
 # ═══════════════════════════════════════════════════════════
 
-def test_cached_requests():
-    """Test request caching functionality"""
-    log_test("Request Caching")
-
-    try:
-        # Skip if MCP not available
-        try:
-            from cartographer_mcp import OptimizedAPIClient
-        except ImportError:
-            log_info("MCP library not available - skipping cache test")
-            return
-
-        client = OptimizedAPIClient(TestConfig.CARTOGRAPHER_URL)
-
-        # First request - should hit server
-        start = time.time()
-        result1 = client.cached_request("GET", "api/scan")
-        time1 = time.time() - start
-
-        if result1:
-            log_pass(f"First request successful ({time1:.3f}s)")
-        else:
-            log_fail("First request failed")
-            return
-
-        # Second request - should hit cache
-        start = time.time()
-        result2 = client.cached_request("GET", "api/scan")
-        time2 = time.time() - start
-
-        if result2:
-            log_pass(f"Second request successful ({time2:.3f}s)")
-        else:
-            log_fail("Second request failed")
-            return
-
-        # Verify caching worked (second should be faster)
-        if time2 < time1 * 0.5:  # Should be at least 50% faster
-            log_pass(f"Caching works (2nd request {time2/time1*100:.1f}% of 1st)")
-        else:
-            log_info(f"Caching unclear (2nd: {time2:.3f}s vs 1st: {time1:.3f}s)")
-
-        # Verify cache has entry
-        if len(client._cache) > 0:
-            log_pass(f"Cache populated ({len(client._cache)} entries)")
-        else:
-            log_fail("Cache not populated")
-
-    except Exception as e:
-        log_fail("Caching test failed", str(e))
 
 
-def test_retry_logic():
-    """Test automatic retry logic"""
-    log_test("Retry Logic")
-
-    try:
-        try:
-            from cartographer_mcp import OptimizedAPIClient
-        except ImportError:
-            log_info("MCP library not available - skipping retry test")
-            return
-
-        # Test with invalid endpoint (should fail after retries)
-        client = OptimizedAPIClient(TestConfig.CARTOGRAPHER_URL)
-
-        try:
-            result = client.cached_request("GET", "api/nonexistent-endpoint-12345")
-            log_fail("Should have failed on invalid endpoint")
-        except Exception as e:
-            if "404" in str(e) or "not found" in str(e).lower():
-                log_pass("Retry logic handles failures correctly")
-            else:
-                log_info(f"Failed with error: {e}")
-
-    except Exception as e:
-        log_fail("Retry logic test failed", str(e))
 
 
-def test_mcp_tool_integration():
-    """Test MCP tool functions"""
-    log_test("MCP Tool Integration")
-
-    try:
-        try:
-            from cartographer_mcp import (
-                get_loaded_project,
-                read_project_file,
-                search_project_files,
-                get_risk_map,
-                apply_ui_enhancement,
-                list_ui_enhancements
-            )
-        except ImportError as e:
-            log_info("MCP library not available - checking code definitions")
-            # At least verify the functions are defined
-            with open("cartographer_mcp.py", 'r') as f:
-                content = f.read()
-                functions = ["apply_ui_enhancement", "list_ui_enhancements"]
-                found = sum(1 for func in functions if f"def {func}" in content)
-                if found == len(functions):
-                    log_pass(f"All {len(functions)} MCP tool functions defined in code")
-                else:
-                    log_fail(f"Only {found}/{len(functions)} MCP functions found")
-            return
-
-        # Test: list_ui_enhancements
-        try:
-            result = list_ui_enhancements()
-            if "Available UI Enhancements" in result:
-                log_pass("list_ui_enhancements() works")
-            else:
-                log_fail("list_ui_enhancements() unexpected output")
-        except Exception as e:
-            log_fail("list_ui_enhancements() failed", str(e))
-
-        # Test: list_ui_enhancements with filter
-        try:
-            result = list_ui_enhancements("chat_interface")
-            if "chat_interface" in result:
-                log_pass("list_ui_enhancements(component) works")
-            else:
-                log_fail("list_ui_enhancements(component) unexpected output")
-        except Exception as e:
-            log_fail("list_ui_enhancements(component) failed", str(e))
-
-        # Test: apply_ui_enhancement
-        try:
-            result = apply_ui_enhancement(
-                "chat_interface",
-                "code_suggestion_autocomplete",
-                {"test": True}
-            )
-            if result and ("component" in result or "code_snippet" in result):
-                log_pass("apply_ui_enhancement() works")
-            else:
-                log_fail("apply_ui_enhancement() unexpected output")
-        except Exception as e:
-            log_fail("apply_ui_enhancement() failed", str(e))
-
-    except ImportError as e:
-        log_fail("Failed to import MCP tools", str(e))
-    except Exception as e:
-        log_fail("MCP tool integration test failed", str(e))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -767,14 +571,10 @@ def run_all_tests():
     # Run test suites
     test_ui_registry_initialization()
     test_ui_registry_operations()
-    test_optimized_api_client()
     test_server_connection()
     test_api_endpoints()
     test_api_post_endpoints()
     test_chat_endpoints()
-    test_cached_requests()
-    test_retry_logic()
-    test_mcp_tool_integration()
     test_end_to_end_workflow()
 
     # Generate report

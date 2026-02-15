@@ -1300,8 +1300,19 @@ async function load(){
     console.error('Failed to load projects:', e);
   }
 
-  // Always show project picker on first load
-  showProjectPicker();
+  // Only show project picker if no projects loaded
+  if(projectTabs.length === 0 || !currentProjectId){
+    showProjectPicker();
+  } else {
+    // Ensure layout is applied before rendering
+    if(D && D.nodes && D.nodes.length > 0 && Object.keys(pos).length === 0){
+      applyLayout();
+    }
+    // Hide picker and show main view
+    document.getElementById('project-picker-overlay').style.display = 'none';
+    document.getElementById('main-layout').style.display = 'flex';
+    render();
+  }
 
   // Fetch AI config
   try {
@@ -2396,7 +2407,7 @@ function fitToScreen(){
 
 function render(){
   renderContextPills();
-  
+
   // Ensure D is synced with current project
   if(currentProjectId && PROJECTS[currentProjectId]){
     D = PROJECTS[currentProjectId];
@@ -2504,7 +2515,7 @@ function render(){
     legendHtml += `<div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>Safe</div><div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Careful</div><div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Critical</div>`;
   }
   legendHtml += '</div>';
-  
+
   canvas.innerHTML = contentHtml + legendHtml;
 
   // 5. Update Detail Panel
@@ -2572,11 +2583,11 @@ function rGraph(nodes,edges,conn,hl,dependencies,dependents,impact){
     });
   }
 
-  let s=`<svg id="gsvg" style="cursor:${drag?'grabbing':'grab'};width:100%;height:100%"><rect width="100%" height="100%" fill="var(--bg)"/><defs><pattern id="gr" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#111827" stroke-width=".5"/></pattern><filter id="glow"><feGaussianBlur stdDeviation="2.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="100%" height="100%" fill="url(#gr)" opacity=".4"/><g id="gg" transform="translate(${tx.x},${tx.y}) scale(${tx.s})">`;
-
   // Calculate expanded dimensions - MATCH layout function!
   const expandedW=Math.max(W,3600);
   const expandedH=Math.max(H,2800);
+
+  let s=`<svg id="gsvg" viewBox="0 0 ${expandedW} ${expandedH}" style="cursor:${drag?'grabbing':'grab'};width:100%;height:100%"><rect width="100%" height="100%" fill="var(--bg)"/><defs><pattern id="gr" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#111827" stroke-width=".5"/></pattern><filter id="glow"><feGaussianBlur stdDeviation="2.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="100%" height="100%" fill="url(#gr)" opacity=".4"/><g id="gg" transform="translate(${tx.x},${tx.y}) scale(${tx.s})">`;
 
   // Draw layer separators and labels - Clean architectural view
   const layers=[
@@ -2775,6 +2786,16 @@ function selN(id){
   }
 }
 function tSort(f){if(sf===f)sd*=-1;else{sf=f;sd=-1}render()}
+
+// Auto-shutdown: Call /api/shutdown when window closes
+window.addEventListener('beforeunload', function() {
+  // Send shutdown request (best effort - may not complete if browser kills page quickly)
+  fetch('/api/shutdown', {
+    method: 'POST',
+    keepalive: true  // Ensures request completes even if page unloads
+  }).catch(() => {}); // Ignore errors
+});
+
 load();
 </script>
 

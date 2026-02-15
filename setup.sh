@@ -26,27 +26,6 @@ else
 fi
 
 echo ""
-echo "🔧 MCP Configuration"
-echo "===================="
-echo ""
-echo "Add this to your ~/.claude/claude_desktop_config.json:"
-echo ""
-cat << EOF
-{
-  "mcpServers": {
-    "cartographer": {
-      "command": "python3",
-      "args": ["$(pwd)/cartographer_mcp.py"]
-    }
-  }
-}
-EOF
-
-echo ""
-echo "Or run this command to add it automatically:"
-echo ""
-echo "  ./configure_mcp.sh"
-echo ""
 echo "✨ Setup complete!"
 echo ""
 echo "📚 Usage:"

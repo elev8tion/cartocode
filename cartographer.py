@@ -4,12 +4,17 @@ Codebase Cartographer — Local Web App
 Usage: python cartographer.py /path/to/your/project [--port 3000]
 Opens an interactive dashboard in your browser.
 """
-import os, sys, json, re, hashlib, threading, webbrowser, time, subprocess
+import os, sys, json, re, hashlib, threading, webbrowser, time, subprocess, atexit
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+
+# ── Auto-shutdown mechanism ──
+LAST_REQUEST_TIME = time.time()
+INACTIVITY_TIMEOUT = 600  # 10 minutes in seconds
+SHUTDOWN_FLAG = threading.Event()
 
 # ── Import scanner from same directory ──
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -835,6 +840,8 @@ class Handler(BaseHTTPRequestHandler):
         return params.get('project_id', [CURRENT_PROJECT_ID])[0] if params.get('project_id') else CURRENT_PROJECT_ID
 
     def do_GET(self):
+        global LAST_REQUEST_TIME
+        LAST_REQUEST_TIME = time.time()
         p = urlparse(self.path).path
         if p == '/api/scan':
             project_id = self.get_project_id_from_query()
@@ -899,7 +906,8 @@ class Handler(BaseHTTPRequestHandler):
         else: self.send_error(404)
 
     def do_POST(self):
-        global CURRENT_PROJECT_ID, PROJECTS, DEEPSEEK_API_KEY, SELECTED_MODEL
+        global CURRENT_PROJECT_ID, PROJECTS, DEEPSEEK_API_KEY, SELECTED_MODEL, LAST_REQUEST_TIME
+        LAST_REQUEST_TIME = time.time()
         p = urlparse(self.path).path
         content_len = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_len).decode('utf-8')
@@ -910,7 +918,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(400, 'Invalid JSON')
             return
 
-        if p == '/api/projects/unload':
+        if p == '/api/shutdown':
+            self._json({'success': True, 'message': 'Server shutting down'})
+            print("\n  Shutdown requested via API - stopping server...")
+            SHUTDOWN_FLAG.set()
+            threading.Thread(target=lambda: (time.sleep(0.5), os._exit(0))).start()
+
+        elif p == '/api/projects/unload':
             project_id = data.get('project_id')
             if project_id in PROJECTS:
                 del PROJECTS[project_id]
@@ -1164,34 +1178,27 @@ def main():
     elif os.environ.get('DEEPSEEK_API_KEY'):
         print(f"  🔑 API key loaded from environment variable")
 
-    # Load project if provided via command line (but skip if it's the Cartographer directory itself)
+    # Load project if provided via command line
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('--'):
         project_path = sys.argv[1]
         if not os.path.isdir(project_path):
             print(f"❌ Not a directory: {project_path}"); sys.exit(1)
 
-        # Don't auto-load if scanning Cartographer's own directory
-        project_path_resolved = str(Path(project_path).resolve())
-        script_dir_resolved = str(SCRIPT_DIR)
-        if project_path_resolved == script_dir_resolved:
-            print(f"  📂 Cartographer directory detected - starting with project picker")
-            print(f"  💡 Tip: Use a different project path to auto-load")
-        else:
-            print(f"  Scanning: {project_path}")
-            result = load_project(project_path)
-            m = result['scan_data']['metadata']
-            print(f"  Files:    {m['total_files']}")
-            print(f"  Edges:    {m['total_edges']}")
-            print(f"  Bindings: {m['total_binding_points']}")
-            print(f"  Health:   {m['health_score']}/100")
-            print(f"  Languages:{', '.join(m['languages'])}")
+        print(f"  Scanning: {project_path}")
+        result = load_project(project_path)
+        m = result['scan_data']['metadata']
+        print(f"  Files:    {m['total_files']}")
+        print(f"  Edges:    {m['total_edges']}")
+        print(f"  Bindings: {m['total_binding_points']}")
+        print(f"  Health:   {m['health_score']}/100")
+        print(f"  Languages:{', '.join(m['languages'])}")
 
-            # Also save agent context
-            ctx_path = Path(project_path) / 'CODEBASE_AGENT_CONTEXT.md'
-            try:
-                ctx_path.write_text(result['scan_data']['agent_context'])
-                print(f"  📋 Agent context saved to: {ctx_path}")
-            except: pass
+        # Also save agent context
+        ctx_path = Path(project_path) / 'CODEBASE_AGENT_CONTEXT.md'
+        try:
+            ctx_path.write_text(result['scan_data']['agent_context'])
+            print(f"  📋 Agent context saved to: {ctx_path}")
+        except: pass
     else:
         print(f"  No project loaded - select one from the dashboard")
 
@@ -1207,6 +1214,21 @@ def main():
         print("\n  Shutting down server and releasing port...")
         server.server_close()
         sys.exit(0)
+
+    def inactivity_monitor():
+        """Monitor for inactivity and auto-shutdown after timeout"""
+        global LAST_REQUEST_TIME
+        while not SHUTDOWN_FLAG.is_set():
+            time.sleep(30)  # Check every 30 seconds
+            inactive_time = time.time() - LAST_REQUEST_TIME
+            if inactive_time > INACTIVITY_TIMEOUT:
+                print(f"\n  ⏱️  No activity for {int(INACTIVITY_TIMEOUT/60)} minutes - auto-shutting down...")
+                shutdown_handler(None, None)
+                break
+
+    # Start inactivity monitor in background
+    monitor_thread = threading.Thread(target=inactivity_monitor, daemon=True)
+    monitor_thread.start()
 
     import signal
     signal.signal(signal.SIGINT, shutdown_handler)

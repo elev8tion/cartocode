@@ -66,6 +66,24 @@ if [ $PORT -ge 3010 ]; then
     exit 1
 fi
 
+# ---- Kill any existing Cartographer processes ----
+PID_FILE="$HOME/.cartographer/server.pid"
+if [ -f "$PID_FILE" ]; then
+    OLD_PID=$(cat "$PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Killing old Cartographer process (PID $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 1
+        # Force kill if still alive
+        kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
+    rm "$PID_FILE"
+fi
+
+# Also kill any orphaned cartographer.py processes
+pkill -f "python.*cartographer.py" 2>/dev/null || true
+sleep 1
+
 # ---- Show starting notification ----
 osascript -e 'display notification "Launching server..." with title "Cartographer" subtitle "Port: '"$PORT"'"'
 
@@ -79,7 +97,6 @@ LOG_FILE="$LOG_DIR/cartographer-$(date +%Y%m%d-%H%M%S).log"
 SERVER_PID=$!
 
 # Save PID for later cleanup
-PID_FILE="$HOME/.cartographer/server.pid"
 echo "$SERVER_PID" > "$PID_FILE"
 
 # ---- Wait for server to start ----
